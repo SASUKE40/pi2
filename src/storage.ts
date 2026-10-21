@@ -82,12 +82,11 @@ export async function readMemory(path: string, limit = Infinity): Promise<Memory
   return limit === Infinity ? entries : entries.slice(-limit);
 }
 
-export async function appendMemory(path: string, entry: MemoryEntry): Promise<void> {
+/** One entry per task: a later adoption for the same task replaces the earlier one. */
+export async function putMemory(path: string, entry: MemoryEntry): Promise<void> {
   // The caller holds the state-directory process lock. Rename prevents a crash leaving a partial JSONL record.
-  let previous = "";
-  try { previous = await readFile(path, "utf8"); }
-  catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+  const kept = (await readMemory(path)).filter(old => old.task !== entry.task && old.runId !== entry.runId);
   const pending = `${path}.${randomUUID()}.tmp`;
-  await writeFile(pending, previous + `${JSON.stringify(entry)}\n`);
+  await writeFile(pending, [...kept, entry].map(item => `${JSON.stringify(item)}\n`).join(""));
   await rename(pending, path);
 }

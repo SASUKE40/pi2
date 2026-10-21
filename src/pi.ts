@@ -41,6 +41,17 @@ function restricted<T extends Tool>(tool: T, root: string, cwd: string): T {
   return { ...tool, execute: async (args: { path: string }, api: unknown, ctx: unknown) => tool.execute({ ...args, path: await confine(root, cwd, args.path) }, api, ctx) };
 }
 
+export const BASH_TIMEOUT_SECONDS = 120;
+
+/** A command the agent starts without a timeout must not hold the whole session. */
+export function boundedShell(extension: Extension): Extension {
+  return { ...extension, tools: extension.tools?.map(tool => tool.name !== "bash" ? tool : {
+    ...tool,
+    description: `${tool.description} Without a timeout, a command is stopped after ${BASH_TIMEOUT_SECONDS} seconds; pass a larger timeout only for a command that legitimately needs it.`,
+    execute: (args: { timeout?: number }, api: unknown, ctx: unknown) => (tool as Tool).execute({ ...args, timeout: args.timeout ?? BASH_TIMEOUT_SECONDS }, api, ctx),
+  }) as Extension["tools"] };
+}
+
 /** ls and read over the evidence; write, edit and delete over the harness tree when editing. */
 async function evidenceTools(cwd: string, evidenceDir: string, editDir?: string): Promise<Extension> {
   const root = await realpath(evidenceDir);
@@ -100,7 +111,7 @@ export async function createPiAgent(options: {
     request.signal.throwIfAborted();
     const context = withAbortSignal(request.signal, BACKGROUND_CONTEXT);
     const registry = createRegistry();
-    const coding = process.env.PI2_REMOTE_URL ? remoteTools(process.env.PI2_REMOTE_URL, process.env.PI2_REMOTE_TOKEN ?? "") : CodingTools;
+    const coding = boundedShell(process.env.PI2_REMOTE_URL ? remoteTools(process.env.PI2_REMOTE_URL, process.env.PI2_REMOTE_TOKEN ?? "") : CodingTools);
     if (request.tools) registry.install(coding);
     else if (request.evidenceDir) registry.install(await evidenceTools(request.cwd, request.evidenceDir, request.editDir));
     const files = request.harness ?? {};

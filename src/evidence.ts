@@ -186,7 +186,7 @@ export async function buildContext(spec: ContextSpec): Promise<string[]> {
     for (const run of spec.pool) {
       const dir = join(context, "pool", run.stage);
       await writeHarness(join(dir, "harness"), run.files, { placeholders: true });
-      await writeFile(join(dir, "harness.diff"), diffHarness(spec.diffAgainst ?? spec.harness ?? {}, run.files, ["reference", run.stage]));
+      await writeFile(join(dir, "harness.diff"), diffHarness(spec.diffAgainst ?? spec.harness ?? {}, run.files, ["current", run.stage]));
       await writeFile(join(dir, "rollout.md"), await trajectory(spec.runDir, run));
       await writeProduced(join(dir, "produced"), spec.runDir, run, spec.deliverables);
     }

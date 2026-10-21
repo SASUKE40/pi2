@@ -4,8 +4,8 @@ import { basename, join, resolve } from "node:path";
 import { processLock } from "@earendil-works/chord/node";
 import { buildContext, producedFiles, walk, type ContextSpec, type DeliverableMode, type Evidence } from "./evidence.js";
 import {
-  checkHarness, GRADER_MARKERS, HARNESS_ROOT, harnessInstructions, normalizeHarness, readTree, sameHarness, validateHarness,
-  writeHarness, type HarnessFiles,
+  autotrigger, checkHarness, GRADER_MARKERS, HARNESS_ROOT, harnessInstructions, normalizeHarness, readTree, sameHarness,
+  validateHarness, writeHarness, type HarnessFiles,
 } from "./harness.js";
 import { renderLibrary } from "./library.js";
 import {
@@ -13,7 +13,7 @@ import {
   READER_SYSTEM, select, selectMission, SOLVER_SYSTEM, type Dimension, type Experience,
 } from "./prompts.js";
 import { seededOrder } from "./random.js";
-import { appendMemory, contains, copyWorkspace, readMemory, writeJson, type MemoryEntry } from "./storage.js";
+import { contains, copyWorkspace, putMemory, readMemory, writeJson, type MemoryEntry } from "./storage.js";
 
 export type { Evidence } from "./evidence.js";
 export interface AgentRequest {
@@ -42,7 +42,9 @@ export interface RunResult {
   runDir: string; outputDir: string; answer: string; instructions: string; harness: HarnessFiles;
   learned: boolean; libraryDir: string; adopted: string;
 }
-export const CONFIG_VERSION = 3;
+export const CONFIG_VERSION = 4;
+/** An invalid proposal gets one corrective attempt before the stage inherits its starting harness. */
+const STAGE_ATTEMPTS = 2;
 const digest = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 const message = (error: unknown) => error instanceof Error ? error.message : String(error);
 async function json<T>(path: string): Promise<T | undefined> {
@@ -64,9 +66,9 @@ async function pool<T, R>(items: T[], width: number, fn: (item: T, index: number
   return results;
 }
 const delivered = (run: Evidence) => !run.error && (run.produced.length > 0 || run.answer.trim().length > 0);
-const isBase = (run: Evidence) => run.stage.startsWith("baseline");
+const isBase = (run: Evidence) => run.stage.startsWith("base");
 
-interface Edited { label: string; files: HarnessFiles; notes: string; keptBase: boolean; fellBack: boolean }
+interface Edited { label: string; files: HarnessFiles; notes: string; error: string; keptBase: boolean; fellBack: boolean }
 type EditSpec = Pick<ContextSpec, "rollouts" | "pool" | "diffAgainst" | "decisions" | "library">;
 
 export async function runRefinement(options: RunOptions, callAgent: AgentCall): Promise<RunResult> {
@@ -205,9 +207,9 @@ export async function runRefinement(options: RunOptions, callAgent: AgentCall): 
     /** One editing stage: the editor changes context/harness/ in place; an invalid tree gets one corrective attempt. */
     async function edit(label: string, job: string, start: HarnessFiles, spec: EditSpec): Promise<Edited> {
       let error = "", seed = start;
-      for (let attempt = 0; attempt < 2; attempt++) {
-        const stage = attempt ? `${label}-retry` : label;
-        const retry = error ? `\n\n# YOUR PREVIOUS PROPOSAL WAS REJECTED\n\nValidation said: ${error}\n\nThe rejected tree is in \`context/harness/\` as you left it. Fix exactly what validation names. This is the last attempt: if it fails again, the stage keeps the harness it started from.` : "";
+      for (let attempt = 1; attempt <= STAGE_ATTEMPTS; attempt++) {
+        const stage = `${label}.a${attempt}`;
+        const retry = error ? `\n\n# YOUR PREVIOUS ATTEMPT WAS REJECTED\n\n${error}\n\nFix it in \`context/harness/\` and reply again.` : "";
         const tree = seed;
         const response = await session(stage, { tools: false, edit: true, instructions: EDITOR_SYSTEM,
           fingerprint: { kind: "edit", job, retry, tree, spec },
@@ -220,123 +222,117 @@ export async function runRefinement(options: RunOptions, callAgent: AgentCall): 
           read = await readTree(join(runDir, stage, "workspace", "context", "harness"));
           await writeJson(treePath, read);
         }
-        error = "";
-        if (read.rejected.length) error = `these files are off the editable surface and were not applied: ${read.rejected.slice(0, 6).join(", ")}. Component names must be lowercase letters, digits, \`_\` or \`-\` (e.g. \`skills/doc_review/SKILL.md\`, \`scripts/check_totals.py\`).`;
-        else if (!Object.keys(read.files).length && Object.keys(tree).length) error = "`context/harness/` came back empty -- edit the files, do not delete them all";
-        else {
-          try { await checkHarness(read.files, { provided, signal: options.signal }); }
-          catch (failure) { options.signal?.throwIfAborted(); error = message(failure); }
-        }
-        if (!error) return { label, files: read.files, notes: parseNotes(response.text), keptBase: sameHarness(read.files, start), fellBack: false };
         seed = read.files;
+        if (!Object.keys(read.files).length && Object.keys(tree).length) {
+          error = "`context/harness/` came back empty -- edit the files, do not delete them all";
+          continue;
+        }
+        if (read.rejected.length) {
+          error = `these files are off the editable surface and were not applied: ${read.rejected.slice(0, 6).join(", ")}. Component names must be lowercase letters, digits, \`_\` or \`-\` (e.g. \`skills/doc_review/SKILL.md\`, \`scripts/check_totals.mjs\`).`;
+          continue;
+        }
+        const { files } = autotrigger(read.files);
+        seed = files;
+        try { await checkHarness(files, { provided, signal: options.signal }); }
+        catch (failure) { options.signal?.throwIfAborted(); error = message(failure); continue; }
+        return { label, files, notes: parseNotes(response.text), error: "", keptBase: sameHarness(files, start), fellBack: false };
       }
-      await writeJson(join(runDir, `${label}-fallback.json`), { error, retained: start });
-      return { label, files: start, notes: `Proposal rejected twice; kept the starting harness. Last validation error: ${error}`, keptBase: true, fellBack: true };
+      await writeJson(join(runDir, `${label}.fallback.json`), { error, retained: start });
+      return { label, files: start, notes: "", error: error.slice(0, 400), keptBase: false, fellBack: true };
     }
 
     const indexes = Array.from({ length: k }, (_, i) => i + 1);
-    const label = (name: string, i: number) => k === 1 ? name : `${name}-${i}`;
+    const token = mode === "parallel" ? "agg" : "seq";
     const dims: Dimension[] = ["INV", "DOM"];
     const decisions: Record<string, string> = {};
-    const record = (edited: Edited[]) => { for (const e of edited) decisions[e.label] = e.keptBase && !e.fellBack ? `KEEP_BASE\n\n${e.notes}` : e.notes; };
-    const baselines = await pool(indexes, workers, i => execute(label("baseline", i), initial));
-    if (!baselines.some(delivered)) throw new Error(`No baseline execution delivered anything:\n${baselines.map(b => b.error ?? `${b.stage}: produced nothing`).join("\n")}`);
+    const record = (edited: Edited[]) => { for (const e of edited) decisions[e.label] = e.notes || e.error; };
+    const baselines = await pool(indexes, workers, i => execute(`base${i}`, initial));
+    if (baselines.every(b => b.error)) throw new Error(`No base execution completed:\n${baselines.map(b => `${b.stage}: ${b.error}`).join("\n")}`);
     const runs: Evidence[] = [...baselines];
     const finals: Evidence[] = [];
     if (mode === "parallel") {
-      const slots = indexes.flatMap(i => dims.map(dim => ({ i, dim })));
-      const edited = await pool(slots, workers, s => edit(label(`propose-${s.dim.toLowerCase()}`, s.i),
-        propose(bp, s.dim, { k, index: s.i }), initial, { rollouts: baselines, library }));
+      const slots = indexes.flatMap(i => dims.map(dim => ({ i, dim, label: `${dim.toLowerCase()}${i}` })));
+      const edited = await pool(slots, workers, s => edit(s.label, propose(bp, s.dim, { k, index: s.i }), initial, { rollouts: baselines, library }));
       record(edited);
-      const probes = await pool(slots, workers, (s, n) => execute(label(`probe-${s.dim.toLowerCase()}`, s.i), edited[n].files));
+      const probes = await pool(edited, workers, e => execute(e.label, e.files));
       runs.push(...probes);
-      const composed = await pool(indexes, workers, i => edit(label("compose", i), aggregate(bp, { k }), initial,
+      const composed = await pool(indexes, workers, i => edit(`agg${i}`, aggregate(bp, { k }), initial,
         { rollouts: baselines, pool: probes, diffAgainst: initial, decisions: { ...decisions }, library }));
       record(composed);
-      finals.push(...await pool(indexes, workers, (i, n) => execute(label("composed", i), composed[n].files)));
+      finals.push(...await pool(composed, workers, e => execute(e.label, e.files)));
       runs.push(...finals);
     } else {
       let current = initial;
       for (const t of indexes) {
         const earlier = runs.filter(run => !isBase(run));
-        const edited = await pool(dims, workers, dim => edit(label(`propose-${dim.toLowerCase()}`, t),
-          propose(bp, dim, { roundT: t }), current,
+        const edited = await pool(dims, workers, dim => edit(`${dim.toLowerCase()}${t}`,
+          propose(bp, dim, { k, index: t, roundT: k > 1 ? t : undefined }), current,
           { rollouts: baselines, pool: earlier.length ? earlier : undefined, diffAgainst: current, decisions: { ...decisions }, library }));
         record(edited);
-        runs.push(...await pool(dims, workers, (dim, n) => execute(label(`probe-${dim.toLowerCase()}`, t), edited[n].files)));
-        const checkpoint = await edit(label("compose", t), composeRound(bp, t, k), current,
+        runs.push(...await pool(edited, workers, e => execute(e.label, e.files)));
+        const checkpoint = await edit(`c${t}`, k === 1 ? aggregate(bp, { k: 1 }) : composeRound(bp, t, k), current,
           { rollouts: baselines, pool: runs.filter(run => !isBase(run)), diffAgainst: current, decisions: { ...decisions }, library });
         record([checkpoint]);
-        const final = await execute(label("composed", t), checkpoint.files);
+        const final = await execute(`c${t}`, checkpoint.files);
         runs.push(final); finals.push(final);
         current = checkpoint.files;
       }
     }
 
-    // The pool is finals only; base rollouts deliver only when no final delivered anything.
-    let viable = finals.filter(delivered), poolKind = "finals";
-    if (!viable.length) { viable = baselines.filter(delivered); poolKind = "baselines (no final delivered)"; }
+    // The pool is exactly the k finals: base executions are never candidates.
+    const viable = finals.filter(delivered);
+    const dropped = finals.filter(run => !delivered(run)).map(run => run.stage);
+    if (!viable.length) throw new Error(`No final execution delivered anything:\n${finals.map(r => `${r.stage}: ${r.error ?? "produced nothing"}`).join("\n")}`);
     let chosen = viable[0], why = "", selectionError = "";
-    let idMap: Record<string, string> = {};
-    if (viable.length > 1) {
-      const ordered = seededOrder(viable, `${options.task}|${k}|${mode}|${options.seed ?? 0}`, run => run.stage);
+    let idMap: Record<string, string> = { A: chosen.stage };
+    if (k === 1) why = "trivial pool: single final at k=1; delivered without a selector session";
+    else {
+      const ordered = seededOrder(viable, `${options.task}|${k}|${token}`, run => run.stage);
       const ids = ordered.map((_, i) => String.fromCharCode(65 + i));
       idMap = Object.fromEntries(ids.map((id, i) => [id, ordered[i].stage]));
-      for (let attempt = 0; attempt < 2; attempt++) {
-        const retry = selectionError ? `\n\n# YOUR PREVIOUS REPLY WAS INVALID\n\n${selectionError}. End with a \`\`\`choice block naming exactly one of the ids.` : "";
-        const response = await session(attempt ? "select-retry" : "select", { tools: false, instructions: READER_SYSTEM,
-          fingerprint: { kind: "select", idMap, retry, candidates: ordered.map(run => ({ stage: run.stage, answer: run.answer, produced: run.produced })) },
-          prepare: async workspace => selectMission(select(bp, ids.length) + retry, await buildContext({
-            root: workspace, runDir, task: options.task, leakGlobs, deliverables, candidates: ordered.map((run, i) => ({ id: ids[i], run })),
-          }), ids) });
-        try {
-          const choice = parseChoice(response.text, ids);
-          chosen = ordered[ids.indexOf(choice.id)]; why = choice.why; selectionError = "";
-          break;
-        } catch (failure) { selectionError = message(failure); }
-      }
-      if (selectionError) {
-        chosen = viable[0];
-        await writeJson(join(runDir, "select-fallback.json"), { error: selectionError, adopted: chosen.stage });
+      const response = await session(`select.${token}${k}`, { tools: false, instructions: READER_SYSTEM,
+        fingerprint: { kind: "select", idMap, candidates: ordered.map(run => ({ stage: run.stage, answer: run.answer, produced: run.produced })) },
+        prepare: async workspace => selectMission(select(bp, ids.length), await buildContext({
+          root: workspace, runDir, task: options.task, leakGlobs, deliverables, candidates: ordered.map((run, i) => ({ id: ids[i], run })),
+        }), ids) });
+      try {
+        const choice = parseChoice(response.text, ids);
+        chosen = ordered[ids.indexOf(choice.id)]; why = choice.why;
+      } catch (failure) {
+        selectionError = message(failure);
+        chosen = [...viable].sort((a, b) => a.stage.localeCompare(b.stage))[0];
       }
     }
-    if (!chosen) throw new Error(`No execution delivered anything:\n${runs.map(r => r.error ?? `${r.stage}: produced nothing`).join("\n")}`);
     await writeJson(join(runDir, "selection.json"), {
-      pool: viable.map(run => run.stage), poolKind, dropped: finals.filter(run => !delivered(run)).map(run => run.stage),
-      idMap, chosen: chosen.stage, why, trivial: viable.length === 1, fallback: selectionError || null,
+      pool: viable.map(run => run.stage), dropped, idMap, chosen: chosen.stage, why, trivial: k === 1,
+      ok: !selectionError, fallback: selectionError || null,
     });
 
-    let lesson: Experience | null = null, edits = "", reflectionError = "";
-    const adoption = { chosen_label: chosen.stage, candidate_ids: idMap, reason: why };
-    for (let attempt = 0; attempt < 2; attempt++) {
-      const retry = reflectionError ? `\n\n# YOUR PREVIOUS REPLY WAS INVALID\n\n${reflectionError}. Reply with the <edits> block and then either one <experience> block or the single line NO_ENTRY.` : "";
-      const job = `${experience(bp)}\n# WHAT HAPPENED\n\nHarness ${chosen.stage} was adopted. The selection reasoning was:\n\n${why || "(a single delivered final; no selector session ran)"}\n\ncontext/adoption.json maps any anonymous IDs in that reasoning to rollout labels. Compare context/harness/ with context/base_harness/ and the candidates in context/pool/. Read the decisions and execution contrasts before writing.${retry}`;
+    // A failed selection still delivers its neutral fallback, but there is no adoption to learn from.
+    let lesson: Experience | null = null, edits = "";
+    if (!selectionError) {
+      const adoption = { chosen_label: chosen.stage, candidate_ids: idMap, reason: why };
+      const job = `# WHAT HAPPENED\n\nHarness ${chosen.stage} was adopted. The selection reasoning was:\n\n${why}\n\ncontext/adoption.json maps any anonymous IDs in that reasoning to rollout labels. Compare context/harness/ with context/base_harness/ and the candidates in context/pool/. Read the decisions and execution contrasts before writing.`;
       const reflectPool = runs.filter(run => !isBase(run));
-      const response = await session(attempt ? "reflect-retry" : "reflect", { tools: false, instructions: READER_SYSTEM,
+      const response = await session(`experience.${token}${k}`, { tools: false, instructions: READER_SYSTEM,
         fingerprint: { kind: "reflect", job, adoption, decisions, runs: runs.map(run => ({ stage: run.stage, answer: run.answer, error: run.error ?? null, produced: run.produced, files: run.files })) },
-        prepare: async workspace => mission(job, await buildContext({
-          root: workspace, runDir, task: options.task, leakGlobs, deliverables,
-          harness: chosen.files, harnessNote: `the adopted harness, from ${chosen.stage}`, baseHarness: initial,
-          rollouts: baselines, pool: reflectPool.length ? reflectPool : undefined, diffAgainst: initial, decisions, adoption,
-        })) });
-      try {
-        ({ edits, experience: lesson } = parseReflection(response.text));
-        const marker = GRADER_MARKERS.find(m => JSON.stringify(lesson ?? {}).includes(m) || why.includes(m));
-        if (marker) throw new Error(`the experience repeats a grader verdict (${marker}); describe execution behavior instead`);
-        reflectionError = "";
-        break;
-      } catch (failure) { lesson = null; reflectionError = message(failure); }
+        prepare: async workspace => {
+          const layout = await buildContext({
+            root: workspace, runDir, task: options.task, leakGlobs, deliverables,
+            harness: chosen.files, harnessNote: `the adopted harness, from ${chosen.stage}`, baseHarness: initial,
+            rollouts: runs, pool: reflectPool.length ? reflectPool : undefined, decisions, adoption,
+          });
+          return `${experience(bp).trim()}\n\n${job}\n\n${layout.join("\n")}`;
+        } });
+      ({ edits, experience: lesson } = parseReflection(response.text));
+      if (lesson && GRADER_MARKERS.some(m => JSON.stringify(lesson).includes(m) || why.includes(m))) lesson = null;
     }
-    if (reflectionError) await writeJson(join(runDir, "reflect-fallback.json"), { error: reflectionError, lesson: null });
     if (edits) await writeFile(join(runDir, "edits.md"), `${edits}\n`);
     options.signal?.throwIfAborted();
     const result: RunResult = { runDir, outputDir: join(runDir, chosen.stage, "workspace"), answer: chosen.answer,
       instructions: chosen.files["systemprompt.md"] ?? "", harness: chosen.files, learned: lesson !== null, libraryDir, adopted: chosen.stage };
     if (lesson) {
-      const runId = basename(runDir);
-      if (!(await readMemory(memoryPath)).some(entry => entry.runId === runId)) {
-        await appendMemory(memoryPath, { runId, task: options.task, adopted: chosen.stage, why, ...lesson, edits, files: chosen.files });
-      }
+      await putMemory(memoryPath, { runId: basename(runDir), task: options.task, adopted: chosen.stage, why, ...lesson, edits, files: chosen.files });
       await renderLibrary(libraryDir, await readMemory(memoryPath), domain);
     }
     await writeJson(join(runDir, "result.json"), result);

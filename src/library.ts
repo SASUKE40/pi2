@@ -19,6 +19,7 @@ export function experienceMarkdown(entry: MemoryEntry): string {
 
 /** Materialise entries as INDEX.md plus harnesses/<run>/{harness/,EXPERIENCE.md}. */
 export async function renderLibrary(dir: string, entries: MemoryEntry[], domain: string): Promise<void> {
+  await rm(join(dir, "harnesses"), { recursive: true, force: true });
   await mkdir(dir, { recursive: true });
   for (const entry of entries) {
     const entryDir = join(dir, "harnesses", entry.runId);

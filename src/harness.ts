@@ -12,18 +12,16 @@ const NAME = "[a-z0-9][a-z0-9_-]*";
 const SKILL = new RegExp(`^skills/(${NAME})/SKILL\\.md$`);
 const SKILL_SCRIPT = new RegExp(`^skills/${NAME}/scripts/[A-Za-z0-9_.-]+$`);
 const SUBAGENT = new RegExp(`^sub_agents/(${NAME})/AGENT\\.md$`);
-const SCRIPT = /^scripts\/[a-z0-9_][a-z0-9_-]*\.(?:py|sh|js|mjs)$/;
+const SCRIPT = /^scripts\/[a-z0-9_][a-z0-9_]*\.mjs$/;
 const PLUGIN = new RegExp(`^plugin/(${NAME})\\.mjs$`);
-const SCRIPT_REF = /(?:python3?|node|bash|sh)\s+((?:\.\/)?(?:\.pi2-harness\/)?(?:skills\/[\w-]+\/)?scripts\/[\w.-]+)/g;
+const SCRIPT_REF = /node\s+((?:\.\/)?(?:\.pi2-harness\/)?(?:skills\/[\w-]+\/)?scripts\/[\w.-]+\.mjs)/g;
+/** Where autotrigger appends a missing skill trigger line. */
+const TRIGGER_FILE = "guardrails.md";
+const triggerLine = (name: string, desc: string) => `- When ${desc}, read \`${HARNESS_ROOT}/skills/${name}/SKILL.md\` and follow it.\n`;
 /** Strings that only a grader's output contains; a tree carrying one could never be served as evidence. */
 export const GRADER_MARKERS = [
   "deterministic_eval_summary", "deterministic_eval_result", "judge_scope_and_deterministic_status",
   "Judge findings on the rendered result", '"passed_count"', '"pass_rate"', '"test_pass_rate"',
-];
-const REPLACES_VERIFICATION = [
-  /\binstead of (?:hand[- ]?roll|writ|build|run|craft|add)\w*\b[^.\n]{0,60}\b(?:tests?|checks?)\b/i,
-  /\b(?:do not|don't|never|no need to) (?:write|add|run|create|craft) (?:your own|additional|extra|other|more|any|ad[- ]hoc) (?:tests?|checks?)\b/i,
-  /\b(?:if|once|when) (?:it|this|the script|all cases?|every case|all checks?) pass(?:es)?,? (?:you are|you're|the work is|the task is|it is) (?:done|finished|complete)\b/i,
 ];
 
 export function isAllowed(path: string): boolean {
@@ -69,21 +67,34 @@ export const skillNames = (files: HarnessFiles) => Object.keys(files).flatMap(p 
 export const subagentNames = (files: HarnessFiles) => Object.keys(files).flatMap(p => SUBAGENT.exec(p)?.[1] ?? []).sort();
 export const alwaysOnText = (files: HarnessFiles) => ALWAYS_ON.map(p => files[p] ?? "").join("\n\n");
 
-/** The prompt text a solver sees: always-on files, then the on-demand components it can reach. */
+/** The prompt text a solver sees: always-on files, then an index of the on-demand components it can reach. */
 export function harnessInstructions(files: HarnessFiles): string {
-  const sections = ALWAYS_ON.filter(p => files[p]?.trim()).map(p => `## ${p}\n${files[p].trim()}`);
+  const parts = ALWAYS_ON.map(p => files[p]?.trim() ?? "").filter(Boolean);
+  const index = (names: string[], path: (name: string) => string) =>
+    names.map(name => `- \`${name}\`: ${frontmatter(files[path(name)], "description") ?? "(no description)"}`).join("\n");
   const skills = skillNames(files);
-  if (skills.length) sections.push(`## Skills\nWhen a skill's situation applies, read its SKILL.md before doing that work:\n${skills.map(name => {
-    const path = `skills/${name}/SKILL.md`;
-    return `- \`${name}\`: ${frontmatter(files[path], "description") ?? "no description"} (${HARNESS_ROOT}/${path})`;
-  }).join("\n")}`);
-  const scripts = Object.keys(files).filter(p => SCRIPT.test(p));
-  if (scripts.length) sections.push(`## Harness scripts\nRun from the workspace root:\n${scripts.map(p => `- ${HARNESS_ROOT}/${p}`).join("\n")}`);
-  if (skills.length || scripts.length) sections.push(`## Verification\nHarness checks and checklists cover only the cases their author anticipated. Passing them is not evidence that the work is done: also test the task statement's own rules on cases you choose yourself.`);
+  if (skills.length) parts.push(`# AVAILABLE SKILLS\nRead \`${HARNESS_ROOT}/skills/<name>/SKILL.md\` when the situation matches:\n${index(skills, name => `skills/${name}/SKILL.md`)}`);
   const delegates = subagentNames(files);
-  if (delegates.length) sections.push(`## Subagents\nDelegate a bounded sub-task with the \`subagent\` tool; each runs in its own context and returns text:\n${delegates.map(name =>
-    `- \`${name}\`: ${frontmatter(files[`sub_agents/${name}/AGENT.md`], "description") ?? "no description"}`).join("\n")}`);
-  return sections.join("\n\n");
+  if (delegates.length) parts.push(`# AVAILABLE SUBAGENTS\nDelegate with the \`subagent\` tool when the situation matches:\n${index(delegates, name => `sub_agents/${name}/AGENT.md`)}`);
+  const scripts = Object.keys(files).filter(p => SCRIPT.test(p)).map(p => p.slice("scripts/".length)).sort();
+  if (scripts.length) parts.push(`# HELPER SCRIPTS\nAvailable at \`${HARNESS_ROOT}/scripts/\`: ${scripts.join(", ")}\nRun with \`node ${HARNESS_ROOT}/scripts/<name>.mjs\`.`);
+  return parts.join("\n\n---\n\n");
+}
+
+/** Give every skill a trigger line in always-on text, skipping one that would exceed the cap; returns the names repaired. */
+export function autotrigger(files: HarnessFiles): { files: HarnessFiles; triggered: string[] } {
+  const out = { ...files };
+  const triggered: string[] = [];
+  for (const name of skillNames(out)) {
+    if (alwaysOnText(out).includes(name)) continue;
+    const desc = (frontmatter(out[`skills/${name}/SKILL.md`], "description") ?? `the ${name} workflow applies`).replace(/\.+$/, "");
+    const line = triggerLine(name, desc);
+    if (alwaysOnText(out).length + line.length + 2 > ALWAYS_ON_MAX) continue;
+    const current = out[TRIGGER_FILE] ?? "";
+    out[TRIGGER_FILE] = current.trim() ? `${current.trimEnd()}\n${line}` : line;
+    triggered.push(name);
+  }
+  return { files: out, triggered };
 }
 
 export function inventory(files: HarnessFiles): string {
@@ -93,17 +104,13 @@ export function inventory(files: HarnessFiles): string {
   return `${parts.join(", ") || "always-on edits only"}; ${alwaysOnText(files).trim().length.toLocaleString("en-US")} always-on chars`;
 }
 
-async function syntaxError(path: string, body: string, signal?: AbortSignal): Promise<string | undefined> {
-  const [command, args] = path.endsWith(".py") ? ["python3", ["-c", "import ast,sys; ast.parse(sys.stdin.read())"]]
-    : path.endsWith(".sh") ? ["bash", ["-n"]]
-    : /\.m?js$/.test(path) ? [process.execPath, ["--check", `--input-type=${path.endsWith(".mjs") || path.startsWith("plugin/") ? "module" : "commonjs"}`]]
-    : [undefined, []];
-  if (!command) return undefined;
-  try { await runProcess(command, args as string[], { input: body, signal, timeoutMs: 20000 }); return undefined; }
+async function parseError(path: string, body: string, signal?: AbortSignal): Promise<string | undefined> {
+  try { await runProcess(process.execPath, ["--check", "--input-type=module"], { input: body, signal, timeoutMs: 20000 }); return undefined; }
   catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
     if (signal?.aborted) throw error;
-    return `${path} does not parse: ${String((error as Error).message).split("\n").filter(Boolean).slice(-2).join(" ").slice(0, 240)}`;
+    const lines = String((error as Error).message).split("\n");
+    const reason = lines.find(line => /^\w*Error\b/.test(line)) ?? lines.filter(Boolean).at(-1) ?? "";
+    return `${path} does not parse: ${reason.slice(0, 160)}`;
   }
 }
 
@@ -120,14 +127,13 @@ export async function checkHarness(files: HarnessFiles, options: { provided?: Se
     if (!frontmatter(text, "description")) errors.push(`skills/${name}/SKILL.md needs a \`description:\` in its frontmatter naming the situation it handles; the runtime advertises skills by it`);
     const declared = frontmatter(text, "name");
     if (declared && declared !== name) errors.push(`skills/${name}/SKILL.md frontmatter \`name: ${declared}\` must match its directory (\`name: ${name}\`) or be removed`);
+    if (!always.includes(name)) errors.push(`skill '${name}' is never named in the always-on text, so the agent will not know to invoke it -- an untriggered skill is dead weight. Fix it by adding a trigger line naming \`${name}\` to systemprompt.md or guardrails.md, e.g. "When <the situation this skill handles>, read \`${HARNESS_ROOT}/skills/${name}/SKILL.md\` and follow it."`);
   }
   for (const name of subagentNames(files)) {
     if (!frontmatter(files[`sub_agents/${name}/AGENT.md`], "description")) errors.push(`sub_agents/${name}/AGENT.md needs a \`description:\` in its frontmatter`);
   }
   for (const [path, body] of Object.entries(files)) {
-    if (!(SKILL.test(path) || SUBAGENT.test(path) || (ALWAYS_ON as readonly string[]).includes(path))) continue;
-    const replaced = REPLACES_VERIFICATION.map(pattern => body.match(pattern)?.[0]).find(Boolean);
-    if (replaced) errors.push(`${path} says "${replaced}": a harness check covers only the cases its author thought of, so present it as ADDITIONAL to the solver's own tests of the task's rules, never as a replacement or a finish line`);
+    if (!(SKILL.test(path) || (ALWAYS_ON as readonly string[]).includes(path))) continue;
     for (const match of body.matchAll(SCRIPT_REF)) {
       const ref = match[1].replace(/^\.\//, "");
       if (ref.startsWith(`${HARNESS_ROOT}/`)) {
@@ -143,8 +149,8 @@ export async function checkHarness(files: HarnessFiles, options: { provided?: Se
     for (const marker of GRADER_MARKERS) if (path.includes(marker) || body.includes(marker)) errors.push(`${path} contains grader-verdict marker ${marker}; remove it`);
   }
   const parsed = await Promise.all(Object.entries(files)
-    .filter(([path]) => SCRIPT.test(path) || SKILL_SCRIPT.test(path) || PLUGIN.test(path))
-    .map(([path, body]) => syntaxError(path, body, options.signal)));
+    .filter(([path]) => SCRIPT.test(path))
+    .map(([path, body]) => parseError(path, body, options.signal)));
   errors.push(...parsed.filter((e): e is string => Boolean(e)));
   if (errors.length) throw new Error(errors.join(" | "));
 }

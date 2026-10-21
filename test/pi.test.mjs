@@ -9,7 +9,7 @@ import test from "node:test";
 import { createModels, createProvider } from "@earendil-works/pi-ai";
 import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
 import { pathToFileURL } from "node:url";
-import { createPiAgent } from "../dist/pi.js";
+import { BASH_TIMEOUT_SECONDS, boundedShell, createPiAgent } from "../dist/pi.js";
 import { runRefinement } from "../dist/core.js";
 import { writeHarness } from "../dist/harness.js";
 
@@ -100,8 +100,10 @@ test("real Pi SDK sessions execute file tools through the complete refinement lo
   assert.equal(requests.filter(r => toolset(r) === "bash,edit,read,write").length, 12);
   assert.equal(requests.filter(r => toolset(r) === "delete,edit,ls,read,write").length, 6);
   assert.equal(requests.filter(r => toolset(r) === "ls,read").length, 1);
+  const bash = requests.flatMap(r => r.tools ?? []).find(tool => tool.function.name === "bash");
+  assert.match(bash.function.description, new RegExp(`stopped after ${BASH_TIMEOUT_SECONDS} seconds`));
   assert.equal(requests.length, 19);
-  const messages = JSON.parse(await readFile(join(result.runDir, "composed", "messages.json"), "utf8"));
+  const messages = JSON.parse(await readFile(join(result.runDir, "agg1", "messages.json"), "utf8"));
   assert.equal(messages.filter((message) => message.role === "toolResult").length, 2);
   assert.ok(messages.some((message) => message.role === "toolResult" && message.toolName === "read" && !message.isError));
 
@@ -150,6 +152,16 @@ test("Pi adapter cancels an active model stream and closes the session", { timeo
   assert.ok(JSON.parse(await readFile(join(root, "messages.json"), "utf8")).length > 0);
 });
 
+test("bash commands get a default timeout unless the agent sets one", async () => {
+  const calls = [];
+  const fake = { name: "coding-tools", tools: [{ name: "bash", description: "Run.", execute: args => calls.push(args) }, { name: "read", description: "Read.", execute: () => {} }] };
+  const [bash, read] = boundedShell(fake).tools;
+  await bash.execute({ command: "node spin.mjs" }, {}, {});
+  await bash.execute({ command: "npm ci", timeout: 900 }, {}, {});
+  assert.deepEqual(calls, [{ command: "node spin.mjs", timeout: BASH_TIMEOUT_SECONDS }, { command: "npm ci", timeout: 900 }]);
+  assert.equal(read, fake.tools[1]);
+});
+
 test("empty model collections fail before running a task", async () => {
   await assert.rejects(createPiAgent({ cwd: process.cwd(), models: createModels() }), /No Pi model is available/);
 });
@@ -170,7 +182,7 @@ test("durable tools load skills, execute scripts and plugins, and join owned sub
     "systemprompt.md": "Verify the result.", "guardrails.md": "Check units.", "LongTermMEMORY.md": "Values are signed.",
     "tool_descriptions/tool_guidance.md": "Read the skill and run its script.",
     "skills/verify/SKILL.md": "---\ndescription: when verifying a value\n---\nUse: node .pi2-harness/scripts/value.mjs",
-    "scripts/value.mjs": 'console.log("script value: 42")',
+    "scripts/value.mjs": 'console.log("script value: 42");',
     "sub_agents/reviewer/AGENT.md": "---\ndescription: reviews a result\n---\nRespond with child confirmed.",
     "plugin/check.mjs": `export default ({ defineExtension, defineTool, Type }) => defineExtension({ name: "checker", tools: [defineTool({
       name: "check_value", description: "Verify a value", parameters: Type.Object({}),

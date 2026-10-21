@@ -74,28 +74,20 @@ const DISCARD_RULES = `TWO RULES THAT DISCARD THE WHOLE PROPOSAL. Validation run
 fails it is returned to you ONCE with the reason; if it fails again, the stage keeps the harness it
 started from and your work is lost.
 
-1. EVERY SKILL AND SUBAGENT NEEDS A DESCRIPTION. \`skills/<name>/SKILL.md\` and
-   \`sub_agents/<name>/AGENT.md\` start with YAML frontmatter carrying a \`description:\` line (and a
-   \`name:\`, if present, equal to the directory). The runtime lists every skill's name and
-   description in the always-on text, so the description IS the trigger: name the situation the
-   skill handles precisely and NARROWLY -- "when reconciling figures that appear in both a filing
-   and a spreadsheet", not "for finance tasks".
+1. EVERY SKILL NEEDS A TRIGGER LINE -- the most violated rule here by a wide margin. If you
+   create or keep \`skills/<name>/SKILL.md\`, its directory name must appear VERBATIM in
+   \`systemprompt.md\` or \`guardrails.md\`, in the SAME edit:
 
-2. EVERY SCRIPT YOU NAME MUST EXIST AND PARSE. A \`.pi2-harness/scripts/<file>\` or
-   \`.pi2-harness/skills/<skill-name>/scripts/<file>\` invoked from a SKILL.md, an AGENT.md or
-   always-on text must ship in the same proposal, and every script and plugin must parse. A helper
-   dropped loose in a skill directory, outside its \`scripts/\`, is OFF THE EDITABLE SURFACE and
-   rejects the proposal. The one exception is a script the RUNTIME already provides in the
-   workspace -- one you can see in \`context/source/\` -- invoked at its workspace path.`;
+       When <the situation this skill handles>, read \`.pi2-harness/skills/<name>/SKILL.md\` and follow it.
 
-const CHECKS_ARE_A_FLOOR = `A CHECK YOU SHIP IS A FLOOR, NEVER A FINISH LINE. A check script, test list or "before finishing"
-checklist covers only the cases you thought of -- the rollouts never saw the grader, so neither did
-you. The solver must still test the task statement's own rules on cases of its choosing; a
-harness check that passes says nothing about the cases it omits. Present it as ADDITIONAL to the
-solver's own verification. Never tell the solver to run your check INSTEAD OF its own tests, to
-skip or stop writing tests, or that passing it means the work is done -- a proposal that does is
-rejected. When a rollout failed on a rule your check does not exercise, add that rule to the
-check rather than more of the cases it already covers.`;
+   An unnamed skill is never opened anyway: the line is what makes it exist.
+
+2. EVERY SCRIPT YOU NAME MUST EXIST. A \`.pi2-harness/scripts/<file>.mjs\` invoked from a SKILL.md
+   or from always-on text must ship in the same proposal, a skill's own helper at
+   \`.pi2-harness/skills/<skill-name>/scripts/<file>.mjs\`; one dropped loose in the skill directory
+   is OFF THE EDITABLE SURFACE and rejects the proposal. The one exception is a script the RUNTIME
+   already provides in the workspace -- one you can see in \`context/source/\` -- invoked at its
+   workspace path.`;
 
 const HOW_TO_CHANGE = `# HOW TO MAKE A CHANGE
 
@@ -126,18 +118,19 @@ The harness is a tree of components. Each has a different runtime cost and a dif
 | \`skills/<name>/SKILL.md\` | a reusable workflow | name and description ALWAYS listed; the body is read ON DEMAND |
 | \`skills/<name>/scripts/<file>\` | a helper carried with its skill | run on demand via bash |
 | \`sub_agents/<name>/AGENT.md\` | a delegated subagent | runs in its OWN context via the \`subagent\` tool, returns text |
-| \`scripts/<name>.py\` (or \`.sh\`, \`.js\`, \`.mjs\`) | a deterministic helper | run on demand via bash |
+| \`scripts/<name>.mjs\` | a deterministic helper | run on demand via bash |
 | \`plugin/<name>.mjs\` | a Pi Durable extension | ALWAYS REGISTERED, and acts INSIDE the tool loop |
 
 The solver works in a copy of the task workspace with the tools \`read\`, \`write\`, \`edit\` and
 \`bash\`. The tree is mounted at \`.pi2-harness/\` in that workspace: a helper runs as
-\`python3 .pi2-harness/scripts/<name>.py\`, and a skill body is read from
+\`node .pi2-harness/scripts/<name>.mjs\`, and a skill body is read from
 \`.pi2-harness/skills/<name>/SKILL.md\`.
 
 The three that are easy to get wrong:
 
-\`skills/\` -- frontmatter needs a \`description:\`, and the rules below decide whether it survives
-validation at all: the description is its trigger, and any helper it calls must travel with it.
+\`skills/\` -- frontmatter needs a \`description:\` (and a \`name:\`, if present, matching the
+directory). Two further rules below decide whether it survives validation at all: it must be named
+in the always-on text, and any helper it calls must travel with it.
 
 \`sub_agents/\` -- frontmatter needs a \`description:\`. It sees only what its own file and the call
 say, never the main conversation or the always-on harness, and it returns text. So it is worth it
@@ -173,8 +166,6 @@ So prefer, in this order:
 
 ${DISCARD_RULES}
 
-${CHECKS_ARE_A_FLOOR}
-
 THE DELIVERABLE'S SHAPE BELONGS TO THE REQUEST, NOT TO YOU. A harness changes HOW the agent
 works; it must never change WHAT SHAPE it delivers. Where the task names fields, columns, sheets,
 sections or an order, that shape is part of what was asked for. A component that tells the agent
@@ -200,7 +191,7 @@ proposal, however good it is.
 | \`tool_descriptions/tool_guidance.md\` | c4 tool prose | ALWAYS ON -- same cost |
 | \`skills/<name>/SKILL.md\` | c6 reusable workflow | name+description listed; body read ON DEMAND from \`.pi2-harness/skills/<name>/SKILL.md\` |
 | \`sub_agents/<name>/AGENT.md\` | c5 delegated subagent | run ON DEMAND via the \`subagent\` tool, in its OWN context |
-| \`scripts/<name>.py\` | c7 deterministic helper | run ON DEMAND via bash as \`python3 .pi2-harness/scripts/<name>.py\` |
+| \`scripts/<name>.mjs\` | c7 deterministic helper | run ON DEMAND via bash as \`node .pi2-harness/scripts/<name>.mjs\` |
 | \`plugin/<name>.mjs\` | c8 plugin | always registered; acts INSIDE the tool loop |
 
 ## The two on-demand levers that are easy to get wrong
@@ -222,11 +213,10 @@ Hard rules, each one learned from a previous failure:
 - The single most common failure of this harness family is producing NO deliverable because the
   model exhausted its output budget on reasoning. Always-on prose makes that WORSE. Prefer an
   on-demand skill over new always-on prose; if you add always-on text, cut something else.
-- Scripts run via bash from \`.pi2-harness/\`; \`scripts/*.py\` must compile, and plugins must parse.
+- Scripts run via bash from \`.pi2-harness/\`; \`scripts/*.mjs\` filenames must be snake_case and
+  must parse as ES modules.
 
 ${DISCARD_RULES}
-
-${CHECKS_ARE_A_FLOOR}
 
 ${HOW_TO_CHANGE}`;
 
@@ -276,7 +266,7 @@ earliest observed divergence, and match each failure to the cheapest effective c
 
 - TOOL ERROR: distinguish bad input from timeout, missing capability, permission, or unread output.
   Give one bounded fallback and stop condition; never prescribe blind repetition.
-- MECHANICAL REPETITION: use \`scripts/<name>.py\` for repeated deterministic extraction,
+- MECHANICAL REPETITION: use \`scripts/<name>.mjs\` for repeated deterministic extraction,
   conversion or checking, with clear inputs, outputs and failure behavior.
 - TRIGGERED WORKFLOW: use an on-demand skill for a narrow multi-step procedure, give it a
   description that names its trigger, and carry any helper it requires.
@@ -332,7 +322,7 @@ parallel candidate owns procedure; stay on practitioner knowledge.`;
 
 const TTS_INV = `# YOUR DIMENSION: INVARIANT -- how the agent works, independent of the subject
 
-You own the machinery: tool guidance, \`scripts/*.py\`, \`sub_agents/*/AGENT.md\`, \`plugin/*.mjs\`, and
+You own the machinery: tool guidance, \`scripts/*.mjs\`, \`sub_agents/*/AGENT.md\`, \`plugin/*.mjs\`, and
 SHORT imperative always-on rules that hold for essentially EVERY task in this {domain} (output
 discipline, verification order, format mechanics, budget and finalization).
 
@@ -342,7 +332,7 @@ changes, it belongs to them, not you.
 
 Pick the cheapest mechanism that fixes what the trajectory shows:
 - the model fumbled a format or a library repeatedly  -> a tool-guidance note, or a small
-  deterministic \`scripts/*.py\` helper it can call instead of improvising
+  deterministic \`scripts/*.mjs\` helper it can call instead of improvising
 - a required step is skipped under time pressure      -> ONE always-on rule, stated in an
   imperative line (every token here competes with the {deliverable} -- if you add, cut)
 - a bounded sub-task drowned the context and returned
@@ -462,7 +452,7 @@ export function aggregate(bp: BenchPrompts, options: { k?: number } = {}): strin
     "You are the integration judge and synthesizer. What you emit is what gets ADOPTED: it runs on this task, and if selected it enters this area's library where later tasks read it. Every rule that bound the candidate proposers binds you -- merging an edit does not launder it.",
     work(bp), lens(bp),
     `# WHAT YOU HAVE\n\n${k} rollout${k > 1 ? "s" : ""} of this task under the unmodified (base) harness, and ${n} dimension-scoped candidate harnesses built on that same base -- ${k} on the INVARIANT dimension (tool and procedure machinery) and ${k} on the DOMAIN dimension (what a professional in this field knows). Each candidate was rolled out ONCE and you have that rollout. The layout under YOUR EVIDENCE says where each piece is.\n\nOpen what each side PRODUCED, not only its trajectory: judging an edit without reading its product is guessing.`,
-    `# YOUR JOB\n\n1. Judge each candidate edit from the evidence: did its rollout show it helped, hurt, or did nothing versus the base rollouts? The task's user request is the yardstick -- completeness against what was asked counts as much as correctness of what was produced. An edit whose skill was never opened or whose rule was ignored changed nothing, whatever it says on paper.\n2. Synthesize ONE final harness containing only what the evidence supports: merge the good parts of both dimensions, resolve overlaps rather than concatenating, keep always-on text tiny, and keep every retained skill's description narrow. Adopting a single candidate wholesale is valid when it is simply the best state.\n\nKEEPING THE BASE UNCHANGED IS A VALID OUTCOME -- if no candidate demonstrably improved on base, leave the tree as it is and say KEEP_BASE in your notes. ${KEEP_BASE}`,
+    `# YOUR JOB\n\n1. Judge each candidate edit from the evidence: did its rollout show it helped, hurt, or did nothing versus the base rollouts? The task's user request is the yardstick -- completeness against what was asked counts as much as correctness of what was produced. An edit whose skill was never opened or whose rule was ignored changed nothing, whatever it says on paper.\n2. Synthesize ONE final harness containing only what the evidence supports: merge the good parts of both dimensions, resolve overlaps rather than concatenating, keep always-on text tiny, and keep every retained skill's trigger line narrow. Adopting a single candidate wholesale is valid when it is simply the best state.\n\nKEEPING THE BASE UNCHANGED IS A VALID OUTCOME -- if no candidate demonstrably improved on base, leave the tree as it is and say KEEP_BASE in your notes. ${KEEP_BASE}`,
     parallelPeer(k, "synthesizers"), yardstick(bp), ANSWER_FREE, EVIDENCE_BOUNDARY, TTS_SURFACE,
     "# NOTES FORMAT\n\nIn your single `<notes>` block, one line per decision:\n\n    kept|revised|dropped -> <which edit> -> <the evidence: what the trajectories showed, with counts where sets are involved>\n\nA decision without evidence attached is a decision the next reader cannot audit.",
   ]);
@@ -571,14 +561,11 @@ export function parseChoice(text: string, ids: string[]): { id: string; why: str
 
 export interface Experience { cue: string; lesson: string; evidence: string; confidence: string }
 
-/** Returns the edit table, and the experience if the reply carries a complete one. */
+/** Returns the edit table, and the experience if the reply carries a complete one; anything else is no entry. */
 export function parseReflection(text: string): { edits: string; experience: Experience | null } {
   const edits = (/<edits>([\s\S]*?)<\/edits>/.exec(text)?.[1] ?? "").trim();
   const block = /<experience>([\s\S]*?)<\/experience>/.exec(text);
-  if (!block) {
-    if (/^\s*NO_ENTRY\s*$/m.test(text)) return { edits, experience: null };
-    throw new Error("expected an <experience> block or the single line NO_ENTRY");
-  }
+  if (!block) return { edits, experience: null };
   const out: Record<string, string> = {};
   for (const line of block[1].trim().split("\n")) {
     const at = line.indexOf(":");
