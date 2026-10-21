@@ -24,7 +24,7 @@ export async function createPiAgent(options: {
   model?: string;
   signal?: AbortSignal;
   modelRuntime?: ModelRuntime;
-}): Promise<{ call: AgentCall; model: string }> {
+}): Promise<{ call: AgentCall; model: string; thinkingLevel: string }> {
   const modelRuntime = options.modelRuntime ?? await ModelRuntime.create({ signal: options.signal });
   const configured = SettingsManager.create(options.cwd);
   const settings = {
@@ -88,5 +88,5 @@ export async function createPiAgent(options: {
       }
     }
   };
-  return { call, model: `${model.provider}/${model.id}` };
+  return { call, model: `${model.provider}/${model.id}`, thinkingLevel };
 }

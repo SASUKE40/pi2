@@ -1,0 +1,398 @@
+{
+  "suite": "pi2-coding-v1",
+  "status": "completed",
+  "model": "openai/gpt-5.4-mini",
+  "thinkingLevel": "medium",
+  "startedAt": "2026-10-21T06:39:31.168Z",
+  "revision": "69460226f8b2b9205ade96f5137b677518341e2d",
+  "dirty": true,
+  "node": "v24.19.0",
+  "repeats": 1,
+  "timeoutMs": 180000,
+  "tasks": [
+    "csv",
+    "intervals",
+    "ledger"
+  ],
+  "notes": [
+    "Fresh state for every attempt; no cross-task learning.",
+    "Grades are computed after refinement and never supplied to agents.",
+    "Checks are withheld from prompts, not protected by an OS sandbox.",
+    "Full workflow usage includes baseline, proposals, probes, composition, execution, reflection.",
+    "Costs are Pi estimates; missing usage is null, not zero. No claim of statistical significance."
+  ],
+  "results": [
+    {
+      "task": "csv",
+      "repeat": 1,
+      "baseline": {
+        "passed": 12,
+        "total": 12,
+        "allPassed": true,
+        "failures": []
+      },
+      "refined": {
+        "passed": 12,
+        "total": 12,
+        "allPassed": true,
+        "failures": []
+      },
+      "workflowSeconds": 90.85132736,
+      "workflowEstimatedCostUsd": 0.2233353,
+      "stages": [
+        {
+          "stage": "baseline",
+          "success": true,
+          "seconds": 24.493667791,
+          "assistantMessages": 6,
+          "inputTokens": 5260,
+          "outputTokens": 3333,
+          "cacheReadTokens": 10368,
+          "cacheWriteTokens": 0,
+          "estimatedCostUsd": 0.019721100000000002
+        },
+        {
+          "stage": "propose-general",
+          "success": true,
+          "seconds": 2.683614209000003,
+          "assistantMessages": 1,
+          "inputTokens": 26009,
+          "outputTokens": 364,
+          "cacheReadTokens": 0,
+          "cacheWriteTokens": 0,
+          "estimatedCostUsd": 0.02114475
+        },
+        {
+          "stage": "propose-task",
+          "success": true,
+          "seconds": 4.614775471999997,
+          "assistantMessages": 1,
+          "inputTokens": 26014,
+          "outputTokens": 497,
+          "cacheReadTokens": 0,
+          "cacheWriteTokens": 0,
+          "estimatedCostUsd": 0.021747
+        },
+        {
+          "stage": "probe-general",
+          "success": true,
+          "seconds": 16.292301109,
+          "assistantMessages": 4,
+          "inputTokens": 4123,
+          "outputTokens": 2166,
+          "cacheReadTokens": 5376,
+          "cacheWriteTokens": 0,
+          "estimatedCostUsd": 0.013242450000000003
+        },
+        {
+          "stage": "probe-task",
+          "success": true,
+          "seconds": 6.365710003,
+          "assistantMessages": 3,
+          "inputTokens": 2210,
+          "outputTokens": 768,
+          "cacheReadTokens": 2688,
+          "cacheWriteTokens": 0,
+          "estimatedCostUsd": 0.0053151
+        },
+        {
+          "stage": "compose",
+          "success": true,
+          "seconds": 4.961442789999993,
+          "assistantMessages": 1,
+          "inputTokens": 58554,
+          "outputTokens": 669,
+          "cacheReadTokens": 0,
+          "cacheWriteTokens": 0,
+          "estimatedCostUsd": 0.046926
+        },
+        {
+          "stage": "composed",
+          "success": true,
+          "seconds": 26.231038575,
+          "assistantMessages": 5,
+          "inputTokens": 6995,
+          "outputTokens": 5049,
+          "cacheReadTokens": 11392,
+          "cacheWriteTokens": 0,
+          "estimatedCostUsd": 0.02882115
+        },
+        {
+          "stage": "reflect",
+          "success": true,
+          "seconds": 5.15558587499999,
+          "assistantMessages": 1,
+          "inputTokens": 84231,
+          "outputTokens": 721,
+          "cacheReadTokens": 0,
+          "cacheWriteTokens": 0,
+          "estimatedCostUsd": 0.06641775
+        }
+      ]
+    },
+    {
+      "task": "intervals",
+      "repeat": 1,
+      "baseline": {
+        "passed": 12,
+        "total": 12,
+        "allPassed": true,
+        "failures": []
+      },
+      "refined": {
+        "passed": 12,
+        "total": 12,
+        "allPassed": true,
+        "failures": []
+      },
+      "workflowSeconds": 51.056493359,
+      "workflowEstimatedCostUsd": 0.0868488,
+      "stages": [
+        {
+          "stage": "baseline",
+          "success": true,
+          "seconds": 6.534528198,
+          "assistantMessages": 4,
+          "inputTokens": 3200,
+          "outputTokens": 525,
+          "cacheReadTokens": 2432,
+          "cacheWriteTokens": 0,
+          "estimatedCostUsd": 0.0049449
+        },
+        {
+          "stage": "propose-general",
+          "success": true,
+          "seconds": 6.384409910000002,
+          "assistantMessages": 1,
+          "inputTokens": 8783,
+          "outputTokens": 548,
+          "cacheReadTokens": 0,
+          "cacheWriteTokens": 0,
+          "estimatedCostUsd": 0.00905325
+        },
+        {
+          "stage": "propose-task",
+          "success": true,
+          "seconds": 5.4005423420000005,
+          "assistantMessages": 1,
+          "inputTokens": 8788,
+          "outputTokens": 640,
+          "cacheReadTokens": 0,
+          "cacheWriteTokens": 0,
+          "estimatedCostUsd": 0.009471
+        },
+        {
+          "stage": "probe-general",
+          "success": true,
+          "seconds": 4.189251856000003,
+          "assistantMessages": 3,
+          "inputTokens": 2003,
+          "outputTokens": 428,
+          "cacheReadTokens": 2432,
+          "cacheWriteTokens": 0,
+          "estimatedCostUsd": 0.00361065
+        },
+        {
+          "stage": "probe-task",
+          "success": true,
+          "seconds": 8.851681201999993,
+          "assistantMessages": 4,
+          "inputTokens": 2124,
+          "outputTokens": 467,
+          "cacheReadTokens": 3712,
+          "cacheWriteTokens": 0,
+          "estimatedCostUsd": 0.0039729
+        },
+        {
+          "stage": "compose",
+          "success": true,
+          "seconds": 4.5040645309999965,
+          "assistantMessages": 1,
+          "inputTokens": 24691,
+          "outputTokens": 591,
+          "cacheReadTokens": 0,
+          "cacheWriteTokens": 0,
+          "estimatedCostUsd": 0.02117775
+        },
+        {
+          "stage": "composed",
+          "success": true,
+          "seconds": 6.146795273000011,
+          "assistantMessages": 4,
+          "inputTokens": 2120,
+          "outputTokens": 451,
+          "cacheReadTokens": 3968,
+          "cacheWriteTokens": 0,
+          "estimatedCostUsd": 0.003917100000000001
+        },
+        {
+          "stage": "reflect",
+          "success": true,
+          "seconds": 9.010822086000001,
+          "assistantMessages": 1,
+          "inputTokens": 33009,
+          "outputTokens": 1321,
+          "cacheReadTokens": 0,
+          "cacheWriteTokens": 0,
+          "estimatedCostUsd": 0.03070125
+        }
+      ]
+    },
+    {
+      "task": "ledger",
+      "repeat": 1,
+      "baseline": {
+        "passed": 12,
+        "total": 12,
+        "allPassed": true,
+        "failures": []
+      },
+      "refined": {
+        "passed": 12,
+        "total": 12,
+        "allPassed": true,
+        "failures": []
+      },
+      "workflowSeconds": 73.24903765799999,
+      "workflowEstimatedCostUsd": 0.18241695000000002,
+      "stages": [
+        {
+          "stage": "baseline",
+          "success": true,
+          "seconds": 13.649226333999977,
+          "assistantMessages": 4,
+          "inputTokens": 3692,
+          "outputTokens": 2068,
+          "cacheReadTokens": 5248,
+          "cacheWriteTokens": 0,
+          "estimatedCostUsd": 0.012468600000000002
+        },
+        {
+          "stage": "propose-general",
+          "success": true,
+          "seconds": 3.187403798000014,
+          "assistantMessages": 1,
+          "inputTokens": 22288,
+          "outputTokens": 406,
+          "cacheReadTokens": 0,
+          "cacheWriteTokens": 0,
+          "estimatedCostUsd": 0.018543
+        },
+        {
+          "stage": "propose-task",
+          "success": true,
+          "seconds": 5.433757241999992,
+          "assistantMessages": 1,
+          "inputTokens": 22293,
+          "outputTokens": 708,
+          "cacheReadTokens": 0,
+          "cacheWriteTokens": 0,
+          "estimatedCostUsd": 0.019905750000000003
+        },
+        {
+          "stage": "probe-general",
+          "success": true,
+          "seconds": 10.795798926999996,
+          "assistantMessages": 4,
+          "inputTokens": 3085,
+          "outputTokens": 1474,
+          "cacheReadTokens": 4864,
+          "cacheWriteTokens": 0,
+          "estimatedCostUsd": 0.009311550000000002
+        },
+        {
+          "stage": "probe-task",
+          "success": true,
+          "seconds": 13.138402279000001,
+          "assistantMessages": 5,
+          "inputTokens": 3313,
+          "outputTokens": 1561,
+          "cacheReadTokens": 6528,
+          "cacheWriteTokens": 0,
+          "estimatedCostUsd": 0.00999885
+        },
+        {
+          "stage": "compose",
+          "success": true,
+          "seconds": 4.191749783999985,
+          "assistantMessages": 1,
+          "inputTokens": 52222,
+          "outputTokens": 472,
+          "cacheReadTokens": 0,
+          "cacheWriteTokens": 0,
+          "estimatedCostUsd": 0.0412905
+        },
+        {
+          "stage": "composed",
+          "success": true,
+          "seconds": 15.258336888999999,
+          "assistantMessages": 5,
+          "inputTokens": 4314,
+          "outputTokens": 1834,
+          "cacheReadTokens": 7936,
+          "cacheWriteTokens": 0,
+          "estimatedCostUsd": 0.0120837
+        },
+        {
+          "stage": "reflect",
+          "success": true,
+          "seconds": 7.563725764000003,
+          "assistantMessages": 1,
+          "inputTokens": 72114,
+          "outputTokens": 1051,
+          "cacheReadTokens": 0,
+          "cacheWriteTokens": 0,
+          "estimatedCostUsd": 0.058815
+        }
+      ]
+    }
+  ],
+  "summary": {
+    "attempts": 3,
+    "workflowErrors": 0,
+    "baseline": {
+      "tasksPassed": 3,
+      "checksPassed": 36,
+      "checksTotal": 36
+    },
+    "refined": {
+      "tasksPassed": 3,
+      "checksPassed": 36,
+      "checksTotal": 36
+    },
+    "completedPairs": 3,
+    "improved": 0,
+    "regressed": 0,
+    "tied": 3
+  },
+  "finishedAt": "2026-10-21T06:43:06.729Z",
+  "cancelled": false,
+  "sourceFilesSha256": {
+    "benchmark/run.mjs": "7ef01779626775f04b437187e0c3c19b86c6b9f0f98754f3ad180715cc1e6a43",
+    "benchmark/tasks.mjs": "e08c076d808168c150e45488c48235a14c9df679db546d3aca779b846102dca4",
+    "package-lock.json": "5c42aee1e523c1b819fe6cdd872444d9d1a832a160a96913ede6e29c801f3f78",
+    "src/cli.ts": "dc6933a4311ebc030795ac070cb95b5fc80ea8bcbe071feeaa3e97cf9f60726a",
+    "src/core.ts": "0633d56c2828dfe05683305586b62256893e413e5a0ef900a20577aad53cf847",
+    "src/pi.ts": "cebce28687b854cde3889992f6002f472ad82459ef69cdaa2dcd4134aa600b25",
+    "src/prompts.ts": "979b1cec01fc2d4d8cf31fa1f67e9d24a4a571b1ca358a1a9628d37dcafa7c63",
+    "src/storage.ts": "3a2c94e991ab1dee26f2fd1bfe6b1d7732f30d628e3fd49f99f3b8464a46a2da"
+  },
+  "baselineTotals": {
+    "seconds": 44.67742232299997,
+    "assistantMessages": 14,
+    "inputTokens": 12152,
+    "outputTokens": 5926,
+    "cacheReadTokens": 18048,
+    "cacheWriteTokens": 0,
+    "estimatedCostUsd": 0.037134600000000004
+  },
+  "workflowTotals": {
+    "seconds": 215.156858377,
+    "assistantMessages": 63,
+    "inputTokens": 481435,
+    "outputTokens": 28112,
+    "cacheReadTokens": 66944,
+    "cacheWriteTokens": 0,
+    "estimatedCostUsd": 0.49260105
+  }
+}

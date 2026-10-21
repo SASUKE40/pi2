@@ -49,7 +49,7 @@ There are eight agent sessions: four task executions and four improvement calls.
 
 Task executions use Pi's `read`, `bash`, `edit`, and `write` tools. Improvement sessions have no tools. Automatic extension, skill, and prompt-template loading is disabled. Task sessions retain Pi's context-file discovery, including copied `AGENTS.md` files; custom system-prompt files are overridden so only the supplied instruction block changes between runs.
 
-Editors see traces and responses, not benchmark grades. The last five learning entries guide future editors and composers, without replacing the next task's initial harness. This implements one refinement step and learning across tasks; it does not include benchmarks, a judge, repeated recursion, or a guarantee that the composed result is better.
+Editors see traces and responses, not benchmark grades. The last five learning entries guide future editors and composers, without replacing the next task's initial harness. This implements one refinement step and learning across tasks; it does not include upstream benchmark integrations, repeated recursion, or a guarantee that the composed result is better.
 
 ## Files and failures
 
@@ -76,6 +76,36 @@ Results are never automatically applied to the source workspace. Copies isolate 
 Malformed editor responses, model errors, timeouts, or Ctrl+C stop the run with a nonzero exit and preserve completed artifacts. Learning is written only after all stages complete successfully. A reflection failure leaves the composed output available in its run folder. `null` reflection is successful and adds no learning entry. Each invocation creates a new run; automatic resume is not implemented.
 
 Use the same state directory to share learning intentionally, or a fresh one to start without prior lessons.
+
+## Quality benchmark
+
+```sh
+# Uses your configured Pi model and makes paid model calls.
+npm run bench
+npm run bench -- --model provider/model --repeats 3
+# Start with one task if desired.
+npm run bench -- --task csv --timeout 180
+```
+
+The small `pi2-coding-v1` suite compares baseline and refined implementations on CSV parsing,
+interval merging, and exact ledger reconciliation (12 checks each). Both executions use the
+same model, tools, task, and starting files. Every attempt starts with fresh learning state;
+this measures refinement on individual tasks, not learning across tasks. The default is one
+attempt per task, or 24 agent sessions in total. `--repeats` repeats all selected tasks.
+
+Checks run after the full refinement loop and never enter agent prompts or editor feedback.
+They are outside copied workspaces but are not protected by an OS sandbox. Failed workflows
+count as failed refined attempts, and reports retain completed baseline grades and errors.
+Reports under `.pi2/benchmarks/quality-*/report.json` contain per-check outcomes, paired
+improvements/regressions, traces, per-stage timing and token usage, and estimated API costs.
+Full workflow cost includes all eight sessions, including the baseline; missing usage is
+reported as `null`. Pi's model pricing is an estimate, not a billing receipt.
+
+This is an exploratory coding suite, not JobBench, LAB, WorkBuddy, or a reproduction of the
+Harness² paper. A few tasks cannot establish general improvement. No mock model is used for
+quality results: missing Pi credentials stop the benchmark before recording scores.
+
+See the [initial GPT-5.4-mini results](benchmark/RESULTS.md) for a recorded live run.
 
 ## Development
 
