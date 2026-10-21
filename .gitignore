@@ -1,5 +1,6 @@
 node_modules/
 dist/
 .pi2/
+benchmark/
 *.tsbuildinfo
 __pycache__/

@@ -123,34 +123,6 @@ test("real Pi SDK sessions execute file tools through the complete refinement lo
   assert.ok(output, stdout);
   assert.equal(await readFile(join(output, "result.txt"), "utf8"), "verified output");
   await assert.rejects(readFile(join(cwd, "result.txt")), { code: "ENOENT" });
-
-  // Validate reporting with a scripted model; these are runner checks, not quality results.
-  const bench = spawn(process.execPath, [
-    "benchmark/run.mjs", "--model", "local-test/test-model", "--task", "csv",
-    "--repeats", "2", "--out", join(root, "benchmark"), "--timeout", "10",
-  ], { env: { ...process.env, PI2_MODELS_MODULE: modulePath }, stdio: ["ignore", "pipe", "pipe"] });
-  let benchOut = "", benchErr = "";
-  bench.stdout.on("data", chunk => { benchOut += chunk; });
-  bench.stderr.on("data", chunk => { benchErr += chunk; });
-  t.after(() => bench.kill());
-  const [benchCode] = await once(bench, "close");
-  assert.equal(benchCode, 0, benchErr);
-  const reportPath = /^Report: (.+)$/m.exec(benchOut)?.[1];
-  assert.ok(reportPath, benchOut);
-  const report = JSON.parse(await readFile(reportPath, "utf8"));
-  assert.equal(report.summary.attempts, 2);
-  assert.equal(report.summary.workflowErrors, 0);
-  assert.equal(report.summary.baseline.checksTotal, 24);
-  assert.equal(report.summary.refined.checksPassed, 0, "unchanged solution stubs must fail");
-  for (const result of report.results) {
-    assert.equal(result.stages.length, 8);
-    const prompt = await readFile(join(result.runDir, "propose-inv", "prompt.txt"), "utf8");
-    assert.match(prompt, /YOUR DIMENSION: INV/);
-    assert.match(prompt, /context\/rollouts\/ +FULL trajectories: baseline\.md/);
-    assert.doesNotMatch(prompt, /context\/library\/ +earlier tasks/, "fresh state has no library");
-    assert.equal(result.baseline.total, 12);
-    assert.equal(result.refined.total, 12);
-  }
 });
 
 test("Pi adapter rejects empty completions and retains the transcript", { timeout: 10000 }, async (t) => {

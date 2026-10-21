@@ -46,17 +46,6 @@ plugin/<name>.mjs
 
 Plugins and scripts run as local code with your permissions. pi2 is not a sandbox.
 
-## Benchmarks
-
-```sh
-npm run bench -- --model provider/model              # local quality suite
-npm run bench -- --model provider/model --suite hard # harder stress suite
-```
-
-Official JobBench, Harvey LAB, and WorkBuddy workflows run through `node dist/cli.js bench`.
-See [official benchmark setup](benchmark/official/README.md) and
-[recorded results](benchmark/RESULTS.md).
-
 ## Development
 
 ```sh

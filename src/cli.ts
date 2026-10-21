@@ -10,7 +10,6 @@ import { readHarness } from "./harness.js";
 
 const HELP = `Usage: pi2 "task" [options]
        pi2 --resume RUN_DIR
-       pi2 bench <setup|check|tasks|split|run|judge|report> --help
 
 Harness2 refinement with Pi Durable, pi-ai, and Chord.
 
@@ -37,10 +36,6 @@ const cancel = () => controller.abort(new Error("Cancelled"));
 process.once("SIGINT", cancel);
 process.once("SIGTERM", cancel);
 try {
-  if (process.argv[2] === "bench") {
-    const { benchCli } = await import("./bench-cli.js");
-    await benchCli(process.argv.slice(3), controller.signal);
-  } else {
   const { values, positionals } = parseArgs({ allowPositionals: true, options: {
     cwd: { type: "string" }, model: { type: "string" }, "improver-model": { type: "string" }, thinking: { type: "string" },
     harness: { type: "string" }, "state-dir": { type: "string" }, timeout: { type: "string" }, help: { type: "boolean" },
@@ -75,7 +70,6 @@ try {
       onProgress: (stage, runDir) => { process.stderr.write(`${stage}${stage === "snapshot" ? `: ${runDir}` : ""}\n`); },
     }, agent.call);
     process.stdout.write(`${result.answer}\n\nOutput: ${result.outputDir}\nRun: ${result.runDir}\nLesson saved: ${result.learned ? "yes" : "no"}\n`);
-  }
   }
 } catch (error) {
   process.stderr.write(`pi2: ${error instanceof Error ? error.message : String(error)}\n`);
