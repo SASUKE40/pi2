@@ -1,0 +1,4 @@
+node_modules/
+dist/
+.pi2/
+*.tsbuildinfo
