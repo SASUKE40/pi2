@@ -1,5 +1,7 @@
 import { constants } from "node:fs";
-import { appendFile, copyFile, lstat, mkdir, readFile, readdir, realpath, stat, symlink, writeFile } from "node:fs/promises";
+import { copyFile, lstat, mkdir, readFile, readdir, realpath, rename, stat, symlink, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import type { HarnessFiles } from "./harness.js";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 export function contains(parent: string, child: string): boolean {
@@ -42,7 +44,9 @@ export async function copyWorkspace(source: string, destination: string, exclude
 }
 
 export async function writeJson(path: string, value: unknown): Promise<void> {
-  await writeFile(path, `${JSON.stringify(value, null, 2)}\n`);
+  const pending = `${path}.${randomUUID()}.tmp`;
+  await writeFile(pending, `${JSON.stringify(value, null, 2)}\n`);
+  await rename(pending, path);
 }
 
 export interface MemoryEntry {
@@ -50,9 +54,10 @@ export interface MemoryEntry {
   instructions: string;
   lesson: string;
   evidence: string;
+  files?: HarnessFiles;
 }
 
-export async function readMemory(path: string): Promise<MemoryEntry[]> {
+export async function readMemory(path: string, limit = 5): Promise<MemoryEntry[]> {
   let text: string;
   try {
     text = await readFile(path, "utf8");
@@ -67,9 +72,15 @@ export async function readMemory(path: string): Promise<MemoryEntry[]> {
     }
     return entry as MemoryEntry;
   });
-  return entries.slice(-5);
+  return limit === Infinity ? entries : entries.slice(-limit);
 }
 
 export async function appendMemory(path: string, entry: MemoryEntry): Promise<void> {
-  await appendFile(path, `${JSON.stringify(entry)}\n`);
+  // The caller holds the state-directory process lock. Rename prevents a crash leaving a partial JSONL record.
+  let previous = "";
+  try { previous = await readFile(path, "utf8"); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+  const pending = `${path}.${randomUUID()}.tmp`;
+  await writeFile(pending, previous + `${JSON.stringify(entry)}\n`);
+  await rename(pending, path);
 }

@@ -1,21 +1,41 @@
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { runRefinement } from "../dist/core.js";
 import { createPiAgent } from "../dist/pi.js";
 import { tasks, grade, failedGrade } from "./tasks.mjs";
+import { hardTasks } from "./hard-tasks.mjs";
 
 const help = `Usage: npm run bench -- [--model provider/model] [--repeats N] [--task ID]
-                     [--out DIR] [--timeout SECONDS]
+                     [--suite basic|hard] [--thinking LEVEL] [--out DIR] [--timeout SECONDS]
 
 Compare baseline vs refined coding-task quality using the same real Pi model.
 Defaults: 1 repeat, all 3 tasks, .pi2/benchmarks, 180 seconds per session.
 Each attempt uses 8 agent sessions and fresh learning state. Provider charges apply.
-Task IDs: ${tasks.map(t => t.id).join(", ")}
+Basic task IDs: ${tasks.map(t => t.id).join(", ")}
+Hard task IDs: ${hardTasks.map(t => t.id).join(", ")}
 Results include held-out checks, per-stage usage, elapsed time, and failures.
 This small local suite is not an official Harness2 benchmark.
 `;
+
+async function sourceHashes() {
+  const files = ['package.json', 'package-lock.json'];
+  for (const directory of ['src', 'benchmark']) for (const file of (await readdir(directory)).sort())
+    if (/\.(ts|mjs)$/.test(file)) files.push(join(directory, file));
+  return Object.fromEntries(await Promise.all(files.map(async file => [file, createHash('sha256').update(await readFile(file)).digest('hex')])));
+}
+
+async function diagnostics(runDir) {
+  if (!runDir) return null;
+  const fallbacks = [];
+  for (const file of (await readdir(runDir)).filter(file => file.endsWith('-fallback.json')).sort())
+    fallbacks.push({ stage: file.slice(0, -'-fallback.json'.length), ...JSON.parse(await readFile(join(runDir, file), 'utf8')) });
+  let result;
+  try { result = JSON.parse(await readFile(join(runDir, 'result.json'), 'utf8')); } catch { /* Interrupted run. */ }
+  return { adopted: result?.adopted ?? null, learned: result?.learned ?? false, fallbacks };
+}
 
 function summarize(results) {
   const summary = { attempts: results.length, workflowErrors: results.filter(r => r.error).length };
@@ -38,13 +58,15 @@ async function usage(artifactDir) {
   try {
     const messages = JSON.parse(await readFile(join(artifactDir, "messages.json"), "utf8"));
     const replies = messages.filter(m => m.role === "assistant");
-    const sum = (get) => replies.length && replies.every(m => Number.isFinite(get(m)))
-      ? replies.reduce((n, m) => n + get(m), 0) : null;
+    const ledger = JSON.parse(await readFile(join(artifactDir, "usage.json"), "utf8"));
+    const buckets = [...Object.values(ledger.models), ...Object.values(ledger.tools)];
+    const sum = get => buckets.length && buckets.every(u => Number.isFinite(get(u)))
+      ? buckets.reduce((n, u) => n + get(u), 0) : null;
     return {
-      assistantMessages: replies.length,
-      inputTokens: sum(m => m.usage?.input), outputTokens: sum(m => m.usage?.output),
-      cacheReadTokens: sum(m => m.usage?.cacheRead), cacheWriteTokens: sum(m => m.usage?.cacheWrite),
-      estimatedCostUsd: sum(m => m.usage?.cost?.total),
+      assistantMessages: replies.length, // Root transcript only; usage below includes all owned conversations.
+      inputTokens: sum(u => u.input), outputTokens: sum(u => u.output),
+      cacheReadTokens: sum(u => u.cacheRead), cacheWriteTokens: sum(u => u.cacheWrite),
+      estimatedCostUsd: sum(u => u.cost?.total),
     };
   } catch { return { assistantMessages: null, estimatedCostUsd: null }; }
 }
@@ -57,6 +79,7 @@ try {
   const { values } = parseArgs({ options: {
     model: { type: "string" }, repeats: { type: "string", default: "1" },
     task: { type: "string" }, out: { type: "string", default: ".pi2/benchmarks" },
+    suite: { type: "string", default: "basic" }, thinking: { type: "string", default: "medium" },
     timeout: { type: "string", default: "180" }, help: { type: "boolean" },
   } });
   if (values.help) {
@@ -66,10 +89,13 @@ try {
     const timeoutMs = Number(values.timeout) * 1000;
     if (!Number.isInteger(repeats) || repeats < 1 || repeats > 100) throw new Error("--repeats must be an integer from 1 to 100");
     if (!Number.isFinite(timeoutMs) || timeoutMs <= 0 || timeoutMs > 2147483647) throw new Error("Invalid --timeout");
-    const selected = tasks.filter(t => !values.task || t.id === values.task);
-    if (!selected.length) throw new Error(`Unknown --task. Choose: ${tasks.map(t => t.id).join(", ")}`);
+    if (!['basic', 'hard'].includes(values.suite)) throw new Error('--suite must be basic or hard');
+    if (!['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'].includes(values.thinking)) throw new Error('Invalid --thinking level');
+    const suiteTasks = values.suite === 'hard' ? hardTasks : tasks;
+    const selected = suiteTasks.filter(t => !values.task || t.id === values.task);
+    if (!selected.length) throw new Error(`Unknown --task. Choose: ${suiteTasks.map(t => t.id).join(", ")}`);
     // Fail before creating results when credentials/model selection are unavailable.
-    const agent = await createPiAgent({ cwd: process.cwd(), model: values.model, signal: controller.signal });
+    const agent = await createPiAgent({ cwd: process.cwd(), model: values.model, thinkingLevel: values.thinking, signal: controller.signal });
     const parent = resolve(values.out);
     await mkdir(parent, { recursive: true });
     const output = await mkdtemp(join(parent, "quality-"));
@@ -80,7 +106,8 @@ try {
       dirty = Boolean(execFileSync("git", ["status", "--porcelain"], { encoding: "utf8" }).trim());
     } catch { /* Git metadata is optional. */ }
     const report = {
-      suite: "pi2-coding-v1", status: "running", model: agent.model, thinkingLevel: agent.thinkingLevel, startedAt: new Date().toISOString(),
+      runtime: "pi-durable-1.3.0", suite: values.suite === 'hard' ? 'pi2-hard-v1' : 'pi2-coding-v1', status: "running", model: agent.model, thinkingLevel: agent.thinkingLevel, startedAt: new Date().toISOString(),
+      sourceHashes: await sourceHashes(),
       revision, dirty, node: process.version, repeats, timeoutMs, tasks: selected.map(t => t.id),
       notes: ["Fresh state for every attempt; no cross-task learning.",
         "Grades are computed after refinement and never supplied to agents.",
@@ -108,7 +135,7 @@ try {
         const start = performance.now();
         try {
           await runRefinement({ task: task.prompt, cwd, stateDir: join(root, "state"),
-            model: agent.model, timeoutMs, signal: controller.signal,
+            model: agent.model, improverModel: agent.improverModel, thinkingLevel: agent.thinkingLevel, timeoutMs, signal: controller.signal,
             onProgress: (stage, path) => {
               runDir = path;
               process.stderr.write(`${task.id} ${repeat}/${repeats}: ${stage}\n`);
@@ -131,10 +158,10 @@ try {
           ? grade(task, join(runDir, "baseline", "workspace")) : failedGrade(task, "Baseline did not complete");
         const refined = !error ? grade(task, join(runDir, "composed", "workspace"))
           : failedGrade(task, "Refinement workflow did not complete");
-        const cost = !error && stages.length === 8 && stages.every(s => s.estimatedCostUsd !== null)
+        const cost = !error && stages.length >= 8 && stages.every(s => s.estimatedCostUsd !== null)
           ? stages.reduce((n, s) => n + s.estimatedCostUsd, 0) : null;
         report.results.push({ task: task.id, repeat, runDir, error, baseline, refined,
-          workflowSeconds: seconds, workflowEstimatedCostUsd: cost, stages });
+          workflowSeconds: seconds, workflowEstimatedCostUsd: cost, stages, diagnostics: await diagnostics(runDir) });
         await save();
         console.log(`${task.id} #${repeat}: baseline ${baseline.passed}/${baseline.total}; refined ${refined.passed}/${refined.total}; ${seconds.toFixed(1)}s${error ? "; WORKFLOW ERROR" : ""}`);
       }

@@ -91,7 +91,8 @@ export function grade(task, workspace) {
   // A separate bounded process keeps a broken submission from stopping the entire suite.
   const source = `
     import assert from 'node:assert/strict';
-    const { name, checks } = JSON.parse(process.argv[2]);
+    import { readFileSync } from 'node:fs';
+    const { name, checks } = JSON.parse(readFileSync(0, 'utf8'));
     const failures = [];
     try {
       const fn = (await import(process.argv[1]))[name];
@@ -112,8 +113,7 @@ export function grade(task, workspace) {
   `;
   const result = spawnSync(process.execPath, ["--input-type=module", "-e", source,
     pathToFileURL(join(workspace, task.file)).href,
-    JSON.stringify({ name: task.name, checks: task.checks }),
-  ], { cwd: workspace, encoding: "utf8", timeout: 5000, maxBuffer: 1024 * 1024 });
+  ], { cwd: workspace, input: JSON.stringify({ name: task.name, checks: task.checks }), encoding: "utf8", timeout: 5000, maxBuffer: 1024 * 1024 });
   if (result.error || result.status !== 0) return failedGrade(task, String(result.error ?? result.stderr));
   try {
     const value = JSON.parse(result.stdout.slice(result.stdout.lastIndexOf("\nPI2_GRADE:") + 11));

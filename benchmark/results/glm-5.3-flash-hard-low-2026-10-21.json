@@ -1,0 +1,372 @@
+{
+  "runtime": "pi-durable-1.3.0",
+  "suite": "pi2-hard-v1",
+  "status": "completed_with_errors",
+  "model": "zai-coding-cn/glm-5.3-flash",
+  "thinkingLevel": "low",
+  "startedAt": "2026-10-21T18:25:09.894Z",
+  "sourceHashes": {
+    "package.json": "60092ea5d921333653c33f1314287e7de9fae2098812c78ffbfd99ef66d19d95",
+    "package-lock.json": "2183dedc8fffaa27d137e2b016f26fa958c28e96473d4b9bd2ad5f10fe726f53",
+    "src/bench-cli.ts": "8f066f50f05f34034b2e3b07ba3aa067c70d17566fb4e6124b4eb83de94d6c3a",
+    "src/benchmarks.ts": "b5830e369d32bf01f4c3a730e219f23b83930aa8fbf3d56e48edac0808ba1275",
+    "src/cli.ts": "48c48ce4ab8ca221928fc49c63a2272fe3804de6e7ddf2a5d567a69335b91fde",
+    "src/core.ts": "0695d7d4e0f25d06a98dcb930fff17553f2e8f31940a8eceaa1125ae3535aae8",
+    "src/harness.ts": "c57b69af0fc3fffa4dbadc3877cd5a1d0e322672220a04cdfeed854e728884b6",
+    "src/pi.ts": "d12a65423f243d5fa7134014be6fbacb80ec74ea8cfb429bc347756719391281",
+    "src/process.ts": "d82d29510696476d5f9ed48b1af7faeefc42e48d7fd0a521e2368e5f23ac8d0a",
+    "src/prompts.ts": "0e497e33a9cc200c2846a8226cba64ee1046193565b6f5105eb99f68d9ac6dda",
+    "src/random.ts": "a8ed6de2c15e8a221a07d25c1a4529d7ef9af7151dae0f9b953a359e2e3f777b",
+    "src/remote.ts": "4608f0addf30871f41c715fa37788f4ec211561d4cbb42d1d736ddeebc516998",
+    "src/storage.ts": "24ea07cc7f425cb08958983d6038870aad1306d434104588bb111fe67348da61",
+    "src/worker.ts": "77d9c4050ef52e53ebbf5ba58a2ff29cad350e4e1560d42ba1ca1fe39ceaf58e",
+    "benchmark/glm-models.mjs": "62ab294dda8c77a1fb0438be711b53adf3050ecb6a5ef39c2df9b7082ddb6aec",
+    "benchmark/hard-tasks.mjs": "0c9cb5c297a289540482c55148ec8c02f975f273c5a41fda0163c897a396e611",
+    "benchmark/run.mjs": "f76963ee046b2c47019e24cb54a4583b3eb1682030a7a692cdd8e2645f79b727",
+    "benchmark/tasks.mjs": "df2ab7d905b691c7cb9049583f175bfa323a2966b6325ee3669a4226afed6616"
+  },
+  "revision": "1369ccb279e3b091a5b8995b80feb97d41d37c37",
+  "dirty": true,
+  "node": "v26.12.0",
+  "repeats": 1,
+  "timeoutMs": 420000,
+  "tasks": [
+    "mincost-flow",
+    "three-way-merge",
+    "mvcc"
+  ],
+  "notes": [
+    "Fresh state for every attempt; no cross-task learning.",
+    "Grades are computed after refinement and never supplied to agents.",
+    "Checks are withheld from prompts, not protected by an OS sandbox.",
+    "Full workflow usage includes baseline, proposals, probes, composition, execution, reflection.",
+    "Costs are Pi estimates; missing usage is null, not zero. No claim of statistical significance.",
+    "Incomplete executions count as failed deliveries; their workspace artifacts were graded separately postmortem and never fed into refinement.",
+    "The local runner aborts a task on execution failure, including a baseline timeout. Thus mincost-flow did not reach refinement.",
+    "Prices are USD estimates from the Pi model catalog; this used a BigModel coding-plan endpoint and is not a billing statement.",
+    "Separate high-reasoning calibration timed out; its usage was not reported. Overall billed usage/cost cannot be determined."
+  ],
+  "results": [
+    {
+      "task": "mincost-flow",
+      "repeat": 1,
+      "error": "Error: baseline: Stage baseline timed out after 420s",
+      "baseline": {
+        "passed": 0,
+        "total": 76,
+        "allPassed": false,
+        "error": "Baseline did not complete"
+      },
+      "refined": {
+        "passed": 0,
+        "total": 76,
+        "allPassed": false,
+        "error": "Refinement workflow did not complete"
+      },
+      "workflowSeconds": 420.013926375,
+      "workflowEstimatedCostUsd": null,
+      "stages": [
+        {
+          "stage": "baseline",
+          "success": false,
+          "seconds": 420.00877587499997,
+          "assistantMessages": 5,
+          "inputTokens": 6181,
+          "outputTokens": 6722,
+          "cacheReadTokens": 16128,
+          "cacheWriteTokens": 0,
+          "estimatedCostUsd": 0.00477199
+        }
+      ],
+      "diagnostics": {
+        "adopted": null,
+        "learned": false,
+        "fallbacks": []
+      }
+    },
+    {
+      "task": "three-way-merge",
+      "repeat": 1,
+      "error": "Error: composed: Stage composed timed out after 420s",
+      "baseline": {
+        "passed": 89,
+        "total": 89,
+        "allPassed": true,
+        "failures": []
+      },
+      "refined": {
+        "passed": 0,
+        "total": 89,
+        "allPassed": false,
+        "error": "Refinement workflow did not complete"
+      },
+      "workflowSeconds": 655.2147139159999,
+      "workflowEstimatedCostUsd": null,
+      "stages": [
+        {
+          "stage": "baseline",
+          "success": true,
+          "seconds": 70.90912487500003,
+          "assistantMessages": 8,
+          "inputTokens": 5414,
+          "outputTokens": 3029,
+          "cacheReadTokens": 22912,
+          "cacheWriteTokens": 0,
+          "estimatedCostUsd": 0.0030139599999999996
+        },
+        {
+          "stage": "propose-general",
+          "success": true,
+          "seconds": 15.679971458000015,
+          "assistantMessages": 1,
+          "inputTokens": 10416,
+          "outputTokens": 406,
+          "cacheReadTokens": 0,
+          "cacheWriteTokens": 0,
+          "estimatedCostUsd": 0.0017654
+        },
+        {
+          "stage": "propose-task",
+          "success": true,
+          "seconds": 16.493172834000028,
+          "assistantMessages": 1,
+          "inputTokens": 10420,
+          "outputTokens": 426,
+          "cacheReadTokens": 0,
+          "cacheWriteTokens": 0,
+          "estimatedCostUsd": 0.001776
+        },
+        {
+          "stage": "propose-general-retry",
+          "success": true,
+          "seconds": 9.573920707999962,
+          "assistantMessages": 1,
+          "inputTokens": 10259,
+          "outputTokens": 227,
+          "cacheReadTokens": 192,
+          "cacheWriteTokens": 0,
+          "estimatedCostUsd": 0.00165811
+        },
+        {
+          "stage": "probe-general",
+          "success": true,
+          "seconds": 78.63843850000005,
+          "assistantMessages": 5,
+          "inputTokens": 4739,
+          "outputTokens": 3871,
+          "cacheReadTokens": 13696,
+          "cacheWriteTokens": 0,
+          "estimatedCostUsd": 0.0030572299999999998
+        },
+        {
+          "stage": "probe-task",
+          "success": true,
+          "seconds": 125.81976437500003,
+          "assistantMessages": 14,
+          "inputTokens": 8476,
+          "outputTokens": 4600,
+          "cacheReadTokens": 79616,
+          "cacheWriteTokens": 0,
+          "estimatedCostUsd": 0.005959880000000001
+        },
+        {
+          "stage": "compose",
+          "success": true,
+          "seconds": 13.152192625000025,
+          "assistantMessages": 1,
+          "inputTokens": 37070,
+          "outputTokens": 461,
+          "cacheReadTokens": 192,
+          "cacheWriteTokens": 0,
+          "estimatedCostUsd": 0.005796759999999999
+        },
+        {
+          "stage": "composed",
+          "success": false,
+          "seconds": 420.00602875000004,
+          "assistantMessages": 42,
+          "inputTokens": 24965,
+          "outputTokens": 17428,
+          "cacheReadTokens": 537984,
+          "cacheWriteTokens": 0,
+          "estimatedCostUsd": 0.028598269999999995
+        }
+      ],
+      "diagnostics": {
+        "adopted": null,
+        "learned": false,
+        "fallbacks": []
+      }
+    },
+    {
+      "task": "mvcc",
+      "repeat": 1,
+      "baseline": {
+        "passed": 71,
+        "total": 71,
+        "allPassed": true,
+        "failures": []
+      },
+      "refined": {
+        "passed": 71,
+        "total": 71,
+        "allPassed": true,
+        "failures": []
+      },
+      "workflowSeconds": 357.36721641699995,
+      "workflowEstimatedCostUsd": 0.03739243,
+      "stages": [
+        {
+          "stage": "baseline",
+          "success": true,
+          "seconds": 45.686464833999985,
+          "assistantMessages": 4,
+          "inputTokens": 4429,
+          "outputTokens": 2381,
+          "cacheReadTokens": 6272,
+          "cacheWriteTokens": 0,
+          "estimatedCostUsd": 0.00204301
+        },
+        {
+          "stage": "propose-task",
+          "success": true,
+          "seconds": 12.51626112499996,
+          "assistantMessages": 1,
+          "inputTokens": 7307,
+          "outputTokens": 487,
+          "cacheReadTokens": 0,
+          "cacheWriteTokens": 0,
+          "estimatedCostUsd": 0.00133955
+        },
+        {
+          "stage": "propose-general",
+          "success": true,
+          "seconds": 17.27903154100012,
+          "assistantMessages": 1,
+          "inputTokens": 7303,
+          "outputTokens": 575,
+          "cacheReadTokens": 0,
+          "cacheWriteTokens": 0,
+          "estimatedCostUsd": 0.00138295
+        },
+        {
+          "stage": "propose-general-retry",
+          "success": true,
+          "seconds": 12.333197874999838,
+          "assistantMessages": 1,
+          "inputTokens": 7020,
+          "outputTokens": 332,
+          "cacheReadTokens": 320,
+          "cacheWriteTokens": 0,
+          "estimatedCostUsd": 0.0012285999999999998
+        },
+        {
+          "stage": "probe-general",
+          "success": true,
+          "seconds": 58.49769866700005,
+          "assistantMessages": 3,
+          "inputTokens": 3580,
+          "outputTokens": 3236,
+          "cacheReadTokens": 4800,
+          "cacheWriteTokens": 0,
+          "estimatedCostUsd": 0.002299
+        },
+        {
+          "stage": "probe-task",
+          "success": true,
+          "seconds": 64.57765883399989,
+          "assistantMessages": 12,
+          "inputTokens": 6227,
+          "outputTokens": 3602,
+          "cacheReadTokens": 54784,
+          "cacheWriteTokens": 0,
+          "estimatedCostUsd": 0.004378570000000001
+        },
+        {
+          "stage": "compose",
+          "success": true,
+          "seconds": 14.122625,
+          "assistantMessages": 1,
+          "inputTokens": 28448,
+          "outputTokens": 666,
+          "cacheReadTokens": 0,
+          "cacheWriteTokens": 0,
+          "estimatedCostUsd": 0.0046002
+        },
+        {
+          "stage": "composed",
+          "success": true,
+          "seconds": 190.65205129099988,
+          "assistantMessages": 30,
+          "inputTokens": 13484,
+          "outputTokens": 7170,
+          "cacheReadTokens": 245760,
+          "cacheWriteTokens": 0,
+          "estimatedCostUsd": 0.012980400000000001
+        },
+        {
+          "stage": "reflect",
+          "success": true,
+          "seconds": 12.640680291000056,
+          "assistantMessages": 1,
+          "inputTokens": 46201,
+          "outputTokens": 420,
+          "cacheReadTokens": 0,
+          "cacheWriteTokens": 0,
+          "estimatedCostUsd": 0.00714015
+        }
+      ],
+      "diagnostics": {
+        "adopted": "composed",
+        "learned": true,
+        "fallbacks": []
+      }
+    }
+  ],
+  "summary": {
+    "attempts": 3,
+    "workflowErrors": 2,
+    "baseline": {
+      "tasksPassed": 2,
+      "checksPassed": 160,
+      "checksTotal": 236
+    },
+    "refined": {
+      "tasksPassed": 1,
+      "checksPassed": 71,
+      "checksTotal": 236
+    },
+    "completedPairs": 1,
+    "improved": 0,
+    "regressed": 0,
+    "tied": 1
+  },
+  "finishedAt": "2026-10-21T18:49:02.767Z",
+  "cancelled": false,
+  "command": "npm run bench -- --model zai-coding-cn/glm-5.3-flash --suite hard --thinking low --repeats 1 --timeout 420",
+  "endpoint": "https://open.bigmodel.cn/api/coding/paas/v4",
+  "artifactDiagnostics": [
+    {
+      "task": "mincost-flow",
+      "stage": "baseline",
+      "note": "Postmortem grading of an unfinished execution; not a completed baseline or final delivery.",
+      "passed": 0,
+      "total": 76,
+      "allPassed": false,
+      "error": "Error: spawnSync /opt/homebrew/Cellar/node/26.12.0/bin/node ETIMEDOUT"
+    },
+    {
+      "task": "three-way-merge",
+      "stage": "composed",
+      "note": "Postmortem grading of an unfinished execution; not a completed baseline or final delivery.",
+      "passed": 89,
+      "total": 89,
+      "allPassed": true,
+      "failures": []
+    }
+  ],
+  "validation": {
+    "testsPassed": 48,
+    "testSourceHash": "38eab094188fb74b0d3f6814d6ee1135bd1b41ba9868694bf65868de90141994"
+  }
+}

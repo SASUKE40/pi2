@@ -6,7 +6,9 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { ModelRuntime } from "@earendil-works/pi-coding-agent";
+import { createModels, createProvider } from "@earendil-works/pi-ai";
+import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
+import { pathToFileURL } from "node:url";
 import { createPiAgent } from "../dist/pi.js";
 import { runRefinement } from "../dist/core.js";
 
@@ -40,26 +42,34 @@ async function localProvider(t, handle) {
     await new Promise((resolve) => server.close(resolve));
     await rm(root, { recursive: true, force: true });
   });
-  const runtime = await ModelRuntime.create({ authPath: join(root, "auth.json"), modelsPath: null, refreshOnCreate: false });
-  runtime.registerProvider("local-test", {
-    baseUrl: `http://127.0.0.1:${server.address().port}/v1`,
-    api: "openai-completions", apiKey: "local-test-only",
+  const runtime = createModels();
+  const providerConfig = {
+    id: "local-test", baseUrl: `http://127.0.0.1:${server.address().port}/v1`,
     models: [{
-      id: "test-model", name: "Local deterministic test model", reasoning: false, input: ["text"],
+      id: "test-model", provider: "local-test", baseUrl: `http://127.0.0.1:${server.address().port}/v1`, api: "openai-completions", name: "Local deterministic test model", reasoning: false, input: ["text"],
       contextWindow: 128000, maxTokens: 4096, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     }],
-  });
-  return { root, runtime };
+  };
+  runtime.setProvider(createProvider({ ...providerConfig,
+    auth: { apiKey: { name: "local test", resolve: async () => ({ auth: { apiKey: "local-test-only" } }) } },
+    api: openAICompletionsApi(),
+  }));
+  const modulePath = join(root, "models.mjs");
+  await writeFile(modulePath, `import { createModels, createProvider } from ${JSON.stringify(import.meta.resolve("@earendil-works/pi-ai"))};
+import { openAICompletionsApi } from ${JSON.stringify(import.meta.resolve("@earendil-works/pi-ai/api/openai-completions.lazy"))};
+export default () => { const models = createModels(); models.setProvider(createProvider({ ...${JSON.stringify(providerConfig)},
+auth: { apiKey: { name: "test", resolve: async () => ({ auth: { apiKey: "test" } }) } }, api: openAICompletionsApi() })); return models; };`);
+  return { root, runtime, modulePath };
 }
 
 test("real Pi SDK sessions execute file tools through the complete refinement loop", { timeout: 20000 }, async (t) => {
   const requests = [];
-  const { root, runtime } = await localProvider(t, (body, res) => {
+  const { root, runtime, modulePath } = await localProvider(t, (body, res) => {
     requests.push(body);
     const content = body.messages.find((message) => message.role === "user")?.content;
     const prompt = typeof content === "string" ? content : (content ?? []).map((part) => part.text ?? "").join("\n");
-    if (!body.tools?.length) {
-      const value = prompt.startsWith("The composed execution")
+    if (!body.tools?.some(tool => tool.function.name === "write")) {
+      const value = prompt.startsWith("The adopted execution")
         ? { lesson: "Write a verifiable artifact", evidence: "The composed execution wrote result.txt and confirmed it with read" }
         : { instructions: "Write result.txt and read it back to verify the result.", rationale: "The task requires a file artifact." };
       return send(res, { content: JSON.stringify(value) });
@@ -74,7 +84,7 @@ test("real Pi SDK sessions execute file tools through the complete refinement lo
   });
   const cwd = join(root, "input");
   await mkdir(cwd);
-  const agent = await createPiAgent({ cwd, model: "local-test/test-model", modelRuntime: runtime });
+  const agent = await createPiAgent({ cwd, model: "local-test/test-model", models: runtime });
   const result = await runRefinement({
     task: "Write verified output to result.txt and read it back.", cwd,
     stateDir: join(root, "state"), model: agent.model, timeoutMs: 10000,
@@ -83,25 +93,20 @@ test("real Pi SDK sessions execute file tools through the complete refinement lo
   await assert.rejects(readFile(join(cwd, "result.txt")), { code: "ENOENT" });
   assert.match(result.answer, /verified output/);
   assert.equal(result.learned, true);
-  assert.equal(requests.filter((request) => !request.tools?.length).length, 4);
-  assert.equal(requests.filter((request) => request.tools?.length).length, 12);
-  for (const request of requests.filter((request) => request.tools?.length)) {
+  assert.equal(requests.filter((request) => !request.tools?.some(tool => tool.function.name === "write")).length, 4);
+  assert.equal(requests.filter((request) => request.tools?.some(tool => tool.function.name === "write")).length, 12);
+  for (const request of requests.filter((request) => request.tools?.some(tool => tool.function.name === "write"))) {
     assert.deepEqual(request.tools.map((tool) => tool.function.name).sort(), ["bash", "edit", "read", "write"]);
   }
   const messages = JSON.parse(await readFile(join(result.runDir, "composed", "messages.json"), "utf8"));
   assert.equal(messages.filter((message) => message.role === "toolResult").length, 2);
   assert.ok(messages.some((message) => message.role === "toolResult" && message.toolName === "read" && !message.isError));
 
-  // Exercise the actual CLI, loading the local provider through Pi's models.json.
-  const agentDir = join(root, "pi-config");
-  await mkdir(agentDir);
-  await writeFile(join(agentDir, "models.json"), JSON.stringify({ providers: {
-    "local-test": runtime.getRegisteredProviderConfig("local-test"),
-  } }));
+  // Exercise the actual CLI using a pi-ai provider module.
   const child = spawn(process.execPath, [
     "dist/cli.js", "Write verified output to result.txt and read it back.", "--cwd", cwd,
     "--model", "local-test/test-model", "--state-dir", join(root, "cli-state"), "--timeout", "10",
-  ], { env: { ...process.env, PI_CODING_AGENT_DIR: agentDir, PI_OFFLINE: "1" }, stdio: ["ignore", "pipe", "pipe"] });
+  ], { env: { ...process.env, PI2_MODELS_MODULE: modulePath }, stdio: ["ignore", "pipe", "pipe"] });
   let stdout = "";
   let stderr = "";
   child.stdout.on("data", (chunk) => { stdout += chunk; });
@@ -120,7 +125,7 @@ test("real Pi SDK sessions execute file tools through the complete refinement lo
   const bench = spawn(process.execPath, [
     "benchmark/run.mjs", "--model", "local-test/test-model", "--task", "csv",
     "--repeats", "2", "--out", join(root, "benchmark"), "--timeout", "10",
-  ], { env: { ...process.env, PI_CODING_AGENT_DIR: agentDir, PI_OFFLINE: "1" }, stdio: ["ignore", "pipe", "pipe"] });
+  ], { env: { ...process.env, PI2_MODELS_MODULE: modulePath }, stdio: ["ignore", "pipe", "pipe"] });
   let benchOut = "", benchErr = "";
   bench.stdout.on("data", chunk => { benchOut += chunk; });
   bench.stderr.on("data", chunk => { benchErr += chunk; });
@@ -144,7 +149,7 @@ test("real Pi SDK sessions execute file tools through the complete refinement lo
 
 test("Pi adapter rejects empty completions and retains the transcript", { timeout: 10000 }, async (t) => {
   const { root, runtime } = await localProvider(t, (_, res) => send(res, { content: "" }));
-  const agent = await createPiAgent({ cwd: root, model: "local-test/test-model", modelRuntime: runtime });
+  const agent = await createPiAgent({ cwd: root, model: "local-test/test-model", models: runtime });
   await assert.rejects(agent.call({
     stage: "test", cwd: root, artifactDir: root, instructions: "Be brief", prompt: "Hello",
     tools: false, signal: new AbortController().signal,
@@ -159,7 +164,7 @@ test("Pi adapter cancels an active model stream and closes the session", { timeo
     res.flushHeaders();
     controller.abort(new Error("test cancellation"));
   });
-  const agent = await createPiAgent({ cwd: root, model: "local-test/test-model", modelRuntime: runtime });
+  const agent = await createPiAgent({ cwd: root, model: "local-test/test-model", models: runtime });
   await assert.rejects(agent.call({
     stage: "test", cwd: root, artifactDir: root, instructions: "Be brief", prompt: "Hello",
     tools: false, signal: controller.signal,
@@ -167,10 +172,124 @@ test("Pi adapter cancels an active model stream and closes the session", { timeo
   assert.ok(JSON.parse(await readFile(join(root, "messages.json"), "utf8")).length > 0);
 });
 
-test("missing credentials do not turn Pi's placeholder into a selected model", async (t) => {
-  const root = await mkdtemp(join(tmpdir(), "pi2-no-auth-"));
-  t.after(() => rm(root, { recursive: true, force: true }));
-  const runtime = await ModelRuntime.create({ authPath: join(root, "auth.json"), modelsPath: null, refreshOnCreate: false });
-  assert.equal(runtime.getAvailableSnapshot().length, 0);
-  await assert.rejects(createPiAgent({ cwd: root, modelRuntime: runtime }), /No Pi model is available/);
+test("empty model collections fail before running a task", async () => {
+  await assert.rejects(createPiAgent({ cwd: process.cwd(), models: createModels() }), /No Pi model is available/);
+});
+
+test("SQLite reopens a completed stage without issuing another model call", async t => {
+  let calls = 0;
+  const { root, runtime } = await localProvider(t, (_, res) => { calls++; send(res, { content: "durable answer" }); });
+  const agent = await createPiAgent({ cwd: root, model: "local-test/test-model", models: runtime });
+  const request = { stage: "test", cwd: root, artifactDir: root, instructions: "Be brief", prompt: "Hello", tools: false, signal: new AbortController().signal };
+  assert.equal((await agent.call(request)).text, "durable answer");
+  assert.equal((await agent.call(request)).text, "durable answer");
+  assert.equal(calls, 1);
+  assert.ok((await readFile(join(root, "session.sqlite"))).length > 0);
+});
+
+test("durable tools load skills, execute scripts and plugins, and join owned subagents", { timeout: 15000 }, async t => {
+  const { writeHarness } = await import("../dist/harness.js");
+  const files = {
+    "systemprompt.md": "Verify the result.", "guardrails.md": "Check units.", "memory.md": "Values are signed.",
+    "tool_guidance.md": "Read the skill and run its script.",
+    "skills/verify/SKILL.md": "When verifying use: node .pi2-harness/scripts/value.mjs",
+    "scripts/value.mjs": 'console.log("script value: 42")',
+    "sub_agents/reviewer.md": "Respond with child confirmed.",
+    "plugins/check.mjs": `export default ({ defineExtension, defineTool, Type }) => defineExtension({ name: "checker", tools: [defineTool({
+      name: "check_value", description: "Verify a value", parameters: Type.Object({}),
+      execute: async () => ({ output: [{ type: "text", text: "plugin confirmed" }] })
+    })] });`,
+  };
+  const seen = [];
+  const { root, runtime } = await localProvider(t, (body, res) => {
+    const prompt = body.messages.find(m => m.role === "user")?.content;
+    const tools = body.messages.filter(m => m.role === "tool");
+    if (JSON.stringify(prompt).includes("Review this result")) {
+      assert.ok(!body.tools.some(tool => tool.function.name === "subagent"));
+      return send(res, { content: "child confirmed" });
+    }
+    const actions = [
+      ["read", { path: ".pi2-harness/skills/verify/SKILL.md" }],
+      ["bash", { command: "node .pi2-harness/scripts/value.mjs" }],
+      ["check_value", {}],
+      ["subagent", { name: "reviewer", task: "Review this result" }],
+    ];
+    if (tools.length < actions.length) {
+      const [name, args] = actions[tools.length];
+      seen.push(name);
+      return send(res, { tool_calls: [{ index: 0, id: `call-${tools.length}`, type: "function", function: { name, arguments: JSON.stringify(args) } }] }, "tool_calls");
+    }
+    assert.match(tools[1].content, /script value: 42/);
+    assert.match(tools[2].content, /plugin confirmed/);
+    assert.match(tools[3].content, /child confirmed/);
+    return send(res, { content: "all components confirmed" });
+  });
+  await writeHarness(join(root, ".pi2-harness"), files);
+  const agent = await createPiAgent({ cwd: root, model: "local-test/test-model", models: runtime });
+  const result = await agent.call({ stage: "test", cwd: root, artifactDir: root, instructions: "", harness: files,
+    tools: true, prompt: "Use the harness components", signal: new AbortController().signal });
+  assert.equal(result.text, "all components confirmed");
+  assert.deepEqual(seen, ["read", "bash", "check_value", "subagent"]);
+});
+
+test("process death resumes pending generation without repeating a committed write tool", { timeout: 15000 }, async t => {
+  let wrote = 0;
+  let interrupt;
+  let killed = false;
+  const pending = new Promise(resolve => { interrupt = resolve; });
+  const { root, runtime, modulePath } = await localProvider(t, (body, res) => {
+    const replies = body.messages.filter(m => m.role === "tool");
+    if (!replies.length) {
+      wrote++;
+      return send(res, { tool_calls: [{ index: 0, id: "write-once", type: "function", function: {
+        name: "write", arguments: JSON.stringify({ path: "result.txt", content: "committed before crash" }),
+      } }] }, "tool_calls");
+    }
+    if (!killed) { interrupt(); return; }
+    return send(res, { content: "resumed after crash" });
+  });
+  const script = `import { createPiAgent } from ${JSON.stringify(new URL("../dist/pi.js", import.meta.url).href)};
+const root = ${JSON.stringify(root)};
+const agent = await createPiAgent({ cwd: root, model: "local-test/test-model" });
+await agent.call({ stage: "test", cwd: root, artifactDir: root, instructions: "", prompt: "Write result", tools: true, signal: new AbortController().signal });`;
+  const child = spawn(process.execPath, ["--input-type=module", "-e", script], { env: { ...process.env, PI2_MODELS_MODULE: modulePath }, stdio: ["ignore", "ignore", "pipe"] });
+  let stderr = "";
+  child.stderr.on("data", chunk => { stderr += chunk; });
+  t.after(() => child.kill("SIGKILL"));
+  await Promise.race([pending, once(child, "close").then(() => { throw new Error(stderr || "child exited before crash point"); })]);
+  const closed = once(child, "close");
+  child.kill("SIGKILL");
+  await closed;
+  killed = true;
+  assert.equal(await readFile(join(root, "result.txt"), "utf8"), "committed before crash");
+  const agent = await createPiAgent({ cwd: root, model: "local-test/test-model", models: runtime });
+  const answer = await agent.call({ stage: "test", cwd: root, artifactDir: root, instructions: "", prompt: "Write result", tools: true, signal: new AbortController().signal });
+  assert.equal(answer.text, "resumed after crash");
+  assert.equal(wrote, 1);
+});
+
+test("solver and improver models route separately and editors can read evidence without write tools", async t => {
+  const modelsSeen = [];
+  const { root, runtime } = await localProvider(t, (body, res) => {
+    modelsSeen.push(body.model);
+    if (body.model === "editor") {
+      assert.deepEqual(body.tools.map(tool => tool.function.name), ["read"]);
+      const reply = body.messages.find(m => m.role === "tool");
+      if (!reply) return send(res, { tool_calls: [{ index: 0, id: "evidence", type: "function", function: {
+        name: "read", arguments: JSON.stringify({ path: "evidence.txt" }),
+      } }] }, "tool_calls");
+      assert.match(reply.content, /artifact truth/);
+    }
+    return send(res, { content: "done" });
+  });
+  const solver = runtime.getModel("local-test", "test-model");
+  runtime.setProvider(createProvider({ id: "local-test", models: [solver, { ...solver, id: "editor" }],
+    auth: { apiKey: { name: "test", resolve: async () => ({ auth: { apiKey: "test" } }) } }, api: openAICompletionsApi(),
+  }));
+  await writeFile(join(root, "evidence.txt"), "artifact truth");
+  const agent = await createPiAgent({ cwd: root, model: "local-test/test-model", improverModel: "local-test/editor", models: runtime });
+  const request = { stage: "test", cwd: root, instructions: "", prompt: "Hello", signal: new AbortController().signal };
+  await agent.call({ ...request, artifactDir: join(root, "solver"), tools: true });
+  await agent.call({ ...request, artifactDir: join(root, "editor"), tools: false, evidenceDir: root });
+  assert.deepEqual(modelsSeen, ["test-model", "editor", "editor"]);
 });

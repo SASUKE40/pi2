@@ -49,7 +49,7 @@ test("four isolated executions, composition evidence, and learning across tasks"
   assert.equal(await readFile(join(result.outputDir, "total.txt"), "utf8"), "85");
   assert.equal(await readFile(join(options.cwd, "ledger.txt"), "utf8"), "100\n-20\n5\n");
   assert.deepEqual((await readdir(options.cwd)).sort(), [".git", "git-alias", "ledger.txt"]);
-  assert.deepEqual(seen.map((request) => request.stage), ["baseline", "propose-general", "propose-task", "probe-general", "probe-task", "compose", "composed", "reflect"]);
+  assert.deepEqual(seen.map((request) => request.stage).sort(), ["baseline", "propose-general", "propose-task", "probe-general", "probe-task", "compose", "composed", "reflect"].sort());
   assert.equal(new Set(seen.map((request) => request.cwd)).size, 8);
   for (const request of seen.filter((request) => request.tools)) {
     await assert.rejects(readFile(join(request.cwd, ".git", "config")), { code: "ENOENT" });
@@ -60,7 +60,7 @@ test("four isolated executions, composition evidence, and learning across tasks"
   assert.match(compose.prompt, /probe-task/);
   assert.match(compose.prompt, /Total: 105/);
   assert.match(compose.prompt, /Total: 85/);
-  const firstMemory = await readMemory(join(options.stateDir, "memory.jsonl"));
+  const firstMemory = await readMemory(join(result.libraryDir, "memory.jsonl"));
   assert.equal(firstMemory.length, 1);
   assert.equal(firstMemory[0].instructions, result.instructions);
   assert.equal(JSON.parse(await readFile(join(result.runDir, "status.json"), "utf8")).status, "completed");
@@ -71,7 +71,7 @@ test("four isolated executions, composition evidence, and learning across tasks"
   assert.equal(seen[0].instructions, "", "learning must not silently replace the baseline");
   assert.equal(seen[0].prompt, options.task);
   assert.match(seen[1].prompt, /Include credits when summing signed ledgers/);
-  assert.equal((await readMemory(join(options.stateDir, "memory.jsonl"))).length, 2);
+  assert.equal((await readMemory(join(second.libraryDir, "memory.jsonl"))).length, 2);
 });
 
 test("null reflection preserves history; only the five latest entries reach editors", async (t) => {
@@ -79,7 +79,8 @@ test("null reflection preserves history; only the five latest entries reach edit
   await mkdir(options.stateDir);
   const entries = Array.from({ length: 7 }, (_, index) => ({ runId: `prior-${index}`, instructions: "", lesson: `lesson-${index}`, evidence: "observed" }));
   const original = entries.map((entry) => JSON.stringify(entry)).join("\n") + "\n";
-  const path = join(options.stateDir, "memory.jsonl");
+  const first = await runRefinement(options, deterministicAgent([], null));
+  const path = join(first.libraryDir, "memory.jsonl");
   await writeFile(path, original);
   const seen = [];
   const result = await runRefinement(options, deterministicAgent(seen, null));
@@ -105,21 +106,28 @@ for (const stage of ["baseline", "probe-general", "composed", "reflect"]) {
     const [run] = await readdir(join(options.stateDir, "runs"));
     const status = JSON.parse(await readFile(join(options.stateDir, "runs", run, "status.json"), "utf8"));
     assert.equal(status.status, "failed");
-    assert.equal(status.stage, stage);
+    assert.match(status.error, new RegExp(stage));
     if (stage === "reflect") {
       assert.equal(await readFile(join(options.stateDir, "runs", run, "composed", "answer.txt"), "utf8"), "Total: 85");
     }
   });
 }
 
-test("malformed proposal stops before probing or writing memory", async (t) => {
+test("malformed proposals retry once and fall back to the current harness", async t => {
   const options = await fixture(t);
   const seen = [];
   const agent = deterministicAgent(seen);
-  await assert.rejects(runRefinement(options, (request) => request.stage === "propose-general"
-    ? Promise.resolve({ text: '{"instructions":42}', trace: "bad schema" }) : agent(request)), /Expected JSON/);
-  assert.deepEqual(seen.map((request) => request.stage), ["baseline"]);
-  await assert.rejects(readFile(join(options.stateDir, "memory.jsonl")), { code: "ENOENT" });
+  let malformed = 0;
+  const result = await runRefinement(options, request => {
+    if (request.stage.startsWith("propose-general")) {
+      malformed++;
+      return Promise.resolve({ text: '{"instructions":42}', trace: "bad schema" });
+    }
+    return agent(request);
+  });
+  assert.equal(malformed, 2);
+  assert.equal(seen.find(r => r.stage === "probe-general").instructions, "");
+  assert.ok(await readFile(join(result.runDir, "propose-general-fallback.json")));
 });
 
 test("timeout and cancellation abort active calls without learning", async (t) => {
@@ -180,4 +188,102 @@ test("copied npm-style executables resolve their own relative dependencies", asy
 test("reject state roots that would swallow the input workspace", async (t) => {
   const options = await fixture(t);
   await assert.rejects(runRefinement({ ...options, stateDir: options.cwd }, deterministicAgent([])), /must not be the workspace/);
+});
+
+for (const mode of ["parallel", "sequential"]) {
+  test(`${mode} recursion uses k references, k compositions and a finals-only selector`, async t => {
+    const options = await fixture(t);
+    const seen = [];
+    const agent = deterministicAgent(seen);
+    const result = await runRefinement({ ...options, k: 2, mode }, async request => {
+      if (request.stage === "select") {
+        seen.push(request);
+        assert.equal(await readFile(join(request.evidenceDir, "candidate-2-workspace", "total.txt"), "utf8"), "85");
+        assert.doesNotMatch(request.prompt, /composed-[12]|baseline/);
+        await assert.rejects(readFile(join(request.evidenceDir, "candidate-2-workspace", ".pi2-harness", "systemprompt.md")), { code: "ENOENT" });
+        return { text: '{"id":"B","reason":"verified output"}', trace: "selection" };
+      }
+      return agent(request);
+    });
+    assert.equal(seen.filter(r => r.tools).length, 8);
+    assert.equal(seen.filter(r => !r.tools).length, 8); // 6 edits + selector + reflection
+    const mapping = JSON.parse(await readFile(join(result.runDir, "selection-map.json"), "utf8"));
+    assert.equal(result.adopted, mapping.B);
+    if (mode === "sequential") {
+      const second = seen.find(r => r.stage === "propose-general-2");
+      assert.match(second.prompt, /composed-1/);
+      assert.match(second.prompt, /Current harness:.*Include every signed amount/);
+    } else {
+      assert.doesNotMatch(seen.find(r => r.stage === "propose-general-2").prompt, /composed-1/);
+    }
+  });
+}
+
+test("benchmark mode records failed probes but only adopts completed finals", async t => {
+  const options = await fixture(t);
+  const seen = [];
+  const call = deterministicAgent(seen);
+  const result = await runRefinement({ ...options, tolerateExecutionFailures: true }, request => {
+    if (request.stage === "probe-general") throw new Error("solver transport failed");
+    return call(request);
+  });
+  assert.equal(result.adopted, "composed");
+  assert.match(seen.find(r => r.stage === "compose").prompt, /solver transport failed/);
+  const failure = JSON.parse(await readFile(join(result.runDir, "probe-general", "status.json"), "utf8"));
+  assert.equal(failure.status, "failed");
+});
+
+test("resume retains snapshot, skips committed stages, rejects incompatible config and learns once", async t => {
+  const options = await fixture(t);
+  let resume;
+  const seen = [];
+  const agent = deterministicAgent(seen);
+  await assert.rejects(runRefinement({ ...options, onProgress: (_, dir) => { resume = dir; } }, request => {
+    if (request.stage === "compose") throw new Error("process stopped");
+    return agent(request);
+  }), /process stopped/);
+  await writeFile(join(options.cwd, "ledger.txt"), "new original inputs");
+  seen.length = 0;
+  const result = await runRefinement({ ...options, resume }, agent);
+  assert.deepEqual(seen.map(r => r.stage), ["compose", "composed", "reflect"]);
+  assert.equal(result.answer, "Total: 85");
+  assert.equal((await readMemory(join(result.libraryDir, "memory.jsonl"))).length, 1);
+  await assert.rejects(runRefinement({ ...options, resume, k: 2 }, agent), /configuration differs/);
+  seen.length = 0;
+  await runRefinement({ ...options, resume }, agent);
+  assert.equal(seen.length, 0);
+  assert.equal((await readMemory(join(result.libraryDir, "memory.jsonl"))).length, 1);
+});
+
+test("editors can read full evidence and actual artifacts; domain/model histories stay separate", async t => {
+  const options = await fixture(t);
+  const seen = [];
+  const agent = deterministicAgent(seen);
+  const first = await runRefinement({ ...options, domain: "finance", model: "a/model" }, agent);
+  const compose = seen.find(r => r.stage === "compose");
+  assert.equal(await readFile(join(compose.evidenceDir, "baseline-workspace", "total.txt"), "utf8"), "105");
+  assert.match(await readFile(join(compose.evidenceDir, "INDEX.md"), "utf8"), /complete trace/);
+  for (const changes of [{ domain: "other", model: "a/model" }, { domain: "finance", model: "b/model" }]) {
+    seen.length = 0;
+    const other = await runRefinement({ ...options, ...changes }, agent);
+    assert.notEqual(other.libraryDir, first.libraryDir);
+    assert.match(seen.find(r => r.stage === "propose-general").prompt, /"priorLessons": \[\]/);
+  }
+});
+
+test("invalid selection and reflection retry then retain a final without inventing a lesson", async t => {
+  const options = await fixture(t);
+  const agent = deterministicAgent([]);
+  const stages = [];
+  const result = await runRefinement({ ...options, k: 2 }, request => {
+    if (/^(select|reflect)/.test(request.stage)) {
+      stages.push(request.stage);
+      return Promise.resolve({ text: "invalid JSON", trace: "bad output" });
+    }
+    return agent(request);
+  });
+  assert.equal(result.adopted, "composed-1");
+  assert.equal(result.learned, false);
+  assert.deepEqual(stages, ["select", "select-retry", "reflect", "reflect-retry"]);
+  assert.ok(await readFile(join(result.runDir, "reflect-fallback.json")));
 });

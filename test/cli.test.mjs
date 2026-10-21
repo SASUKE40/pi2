@@ -9,7 +9,7 @@ test("CLI help works without SDK credentials", () => {
   assert.equal(result.stderr, "");
 });
 
-for (const args of [[], [""], ["one", "two"], ["task", "--timeout", "NaN"], ["task", "--timeout", "0"], ["task", "--unknown"]]) {
+for (const args of [[], [""], ["one", "two"], ["task", "--timeout", "NaN"], ["task", "--timeout", "0"], ["task", "--unknown"], ["task", "--k", "0"], ["task", "--mode", "bad"], ["task", "--workers", "0"], ["task", "--thinking", "invalid"]]) {
   test(`CLI rejects invalid arguments: ${JSON.stringify(args)}`, () => {
     const result = spawnSync(process.execPath, ["dist/cli.js", ...args], { encoding: "utf8" });
     assert.equal(result.status, 1);

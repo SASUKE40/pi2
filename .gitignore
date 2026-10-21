@@ -2,3 +2,4 @@ node_modules/
 dist/
 .pi2/
 *.tsbuildinfo
+__pycache__/
