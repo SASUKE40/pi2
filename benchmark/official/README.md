@@ -73,6 +73,13 @@ generates upstream's solver/judge route files. Otherwise configure routes using 
 `configs/models/_template.model.yaml`; `bench check` identifies a missing solver route.
 Pi's `--model` remains independent of these WorkBuddy route settings.
 
+The catalog passes each adapter's `BenchSpec.leak_globs` and `proposer_deliverables` through to
+refinement. Matching paths are stripped from every editor's `context/source/`, and every context is
+checked for answer-key paths and grader-verdict markers. For `wb-code`, editors see only the names
+of the files a rollout produced, as upstream does. The selector always sees the produced files.
+Benchmark guidance is the adapter's full `BenchPrompts` for the task, so the INV/DOM levers, the
+yardstick, the selection checks, and the `tts` pack for JobBench match upstream.
+
 Verifier files remain outside all editor evidence directories. The upstream artifact allowlist
 admits office raw deliverables, code patches, and web workspace archives. Only these artifacts
 are rendered. A missing verifier score is `null`, never an invented zero. `bench judge` reads

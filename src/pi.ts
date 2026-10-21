@@ -1,5 +1,5 @@
-import { mkdir, realpath } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { mkdir, readdir, realpath, rm } from "node:fs/promises";
+import { basename, dirname, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { processLock } from "@earendil-works/chord/node";
 import { BACKGROUND_CONTEXT, withAbortSignal } from "@earendil-works/chord/context";
@@ -11,11 +11,68 @@ import {
 } from "@earendil-works/pi-durable";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
-import { CodingTools, createReadTool, type ReadToolInput } from "@earendil-works/pi-durable/tools";
+import { CodingTools, createEditTool, createReadTool, createWriteTool } from "@earendil-works/pi-durable/tools";
 import type { AgentCall } from "./core.js";
-import { harnessInstructions } from "./harness.js";
+import { frontmatter, HARNESS_ROOT, subagentNames, withoutFrontmatter } from "./harness.js";
 import { contains, writeJson } from "./storage.js";
 import { remoteTools } from "./remote.js";
+
+const SUBAGENT_PREAMBLE = "You are a delegated subagent working in the same workspace as the agent that called you. You do not see its conversation or its instructions: only your role below and the task in the user message. Do that task with the available tools and return a concise text answer.";
+
+/** Resolve a tool path and require it, or its nearest existing ancestor, to stay inside `root`. */
+async function confine(root: string, cwd: string, path: string): Promise<string> {
+  const absolute = resolve(cwd, path);
+  let existing = absolute, rest = "";
+  for (;;) {
+    try { existing = await realpath(existing); break; }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT" || dirname(existing) === existing) throw error;
+      rest = rest ? join(basename(existing), rest) : basename(existing);
+      existing = dirname(existing);
+    }
+  }
+  const real = rest ? join(existing, rest) : existing;
+  if (!contains(root, real)) throw new Error(`Access is restricted to ${relative(cwd, root) || "."}/`);
+  return real;
+}
+
+type Tool = { execute: (args: any, api: any, ctx: any) => any };
+function restricted<T extends Tool>(tool: T, root: string, cwd: string): T {
+  return { ...tool, execute: async (args: { path: string }, api: unknown, ctx: unknown) => tool.execute({ ...args, path: await confine(root, cwd, args.path) }, api, ctx) };
+}
+
+/** ls and read over the evidence; write, edit and delete over the harness tree when editing. */
+async function evidenceTools(cwd: string, evidenceDir: string, editDir?: string): Promise<Extension> {
+  const root = await realpath(evidenceDir);
+  const ls = defineTool({
+    name: "ls", description: "List a directory under context/ recursively (directories end in /). Use it to inventory evidence before reading.",
+    parameters: Type.Object({ path: Type.String({ description: "Directory to list, e.g. context/ or context/pool/" }) }), replay: "safe",
+    execute: async args => {
+      const dir = await confine(root, cwd, args.path);
+      const entries = (await readdir(dir, { recursive: true, withFileTypes: true }))
+        .map(entry => relative(dir, join(entry.parentPath, entry.name)) + (entry.isDirectory() ? "/" : "")).sort();
+      const shown = entries.slice(0, 2000);
+      return { output: [{ type: "text", text: (shown.join("\n") || "(empty)") + (entries.length > shown.length ? `\n… ${entries.length - shown.length} more` : "") }] };
+    },
+  });
+  const tools: unknown[] = [ls, restricted(createReadTool(), root, cwd)];
+  if (editDir) {
+    await mkdir(editDir, { recursive: true });
+    const tree = await realpath(editDir);
+    const remove = defineTool({
+      name: "delete", description: "Delete a file or directory under context/harness/ to remove that harness component.",
+      parameters: Type.Object({ path: Type.String() }), replay: "safe",
+      execute: async args => {
+        const target = await confine(tree, cwd, args.path);
+        if (target === tree) throw new Error("Delete individual components, not the whole harness");
+        await rm(target, { recursive: true, force: true });
+        return { output: [{ type: "text", text: `Deleted ${args.path}` }] };
+      },
+    });
+    tools.push(restricted(createWriteTool(), tree, cwd), restricted(createEditTool(), tree, cwd), remove);
+  }
+  return defineExtension({ name: "evidence", tools: tools as Extension["tools"] });
+}
 
 export async function createPiAgent(options: {
   cwd: string; model?: string; improverModel?: string; thinkingLevel?: ModelThinkingLevel;
@@ -45,21 +102,14 @@ export async function createPiAgent(options: {
     const registry = createRegistry();
     const coding = process.env.PI2_REMOTE_URL ? remoteTools(process.env.PI2_REMOTE_URL, process.env.PI2_REMOTE_TOKEN ?? "") : CodingTools;
     if (request.tools) registry.install(coding);
-    else if (request.evidenceDir) {
-      const read = createReadTool();
-      const root = await realpath(request.evidenceDir);
-      const restricted = { ...read, execute: async (args: ReadToolInput, api: Parameters<typeof read.execute>[1], ctx: Parameters<typeof read.execute>[2]) => {
-        const path = await realpath(resolve(request.cwd, args.path));
-        if (!contains(root, path)) throw new Error("Read access is restricted to evidence/");
-        return read.execute({ ...args, path }, api, ctx);
-      } };
-      registry.install(defineExtension({ name: "evidence", tools: [restricted] }));
-    }
-    const files = request.harness ?? { "systemprompt.md": request.instructions };
-    const delegates = Object.fromEntries(Object.entries(files).filter(([p]) => p.startsWith("sub_agents/")).map(([p, text]) => [p.slice(11, -3), text]));
+    else if (request.evidenceDir) registry.install(await evidenceTools(request.cwd, request.evidenceDir, request.editDir));
+    const files = request.harness ?? {};
+    const delegates = Object.fromEntries(subagentNames(files).map(name => [name, files[`sub_agents/${name}/AGENT.md`]]));
     if (request.tools && Object.keys(delegates).length) {
       const delegate = defineTool({
-        name: "subagent", description: `Delegate to a specialist: ${Object.keys(delegates).join(", ")}.`,
+        name: "subagent",
+        description: `Run a delegated subagent in its own context; it returns text. Available:\n${Object.entries(delegates)
+          .map(([name, text]) => `- ${name}: ${frontmatter(text, "description") ?? ""}`).join("\n")}`,
         parameters: Type.Object({ name: Type.String(), task: Type.String() }), replay: "safe",
         execute: async (args, api, ctx) => {
           if (!Object.hasOwn(delegates, args.name)) throw new Error(`Unknown subagent: ${args.name}`);
@@ -67,7 +117,7 @@ export async function createPiAgent(options: {
             const existing = (await tx.scanConversations({ ownerTaskId: api.taskId }, 1)).items[0];
             if (existing) return existing.id;
             const child = await tx.createConversation({ ownership: { kind: "task", taskId: api.taskId } });
-            await configure(tx, child.id, { instructions: harnessInstructions(files) + "\n\n" + delegates[args.name], tools: coding.tools });
+            await configure(tx, child.id, { instructions: `${SUBAGENT_PREAMBLE}\n\n${withoutFrontmatter(delegates[args.name])}`, tools: coding.tools });
             return child.id;
           }, ctx);
           const child = (await api.conversation(childId, ctx))!;
@@ -80,8 +130,8 @@ export async function createPiAgent(options: {
       registry.install(defineExtension({ name: "delegation", tools: [delegate] }));
     }
     if (request.tools) {
-      for (const path of Object.keys(files).filter(p => p.startsWith("plugins/"))) {
-        const factory = (await import(pathToFileURL(join(request.cwd, ".pi2-harness", path)).href)).default;
+      for (const path of Object.keys(files).filter(p => p.startsWith("plugin/"))) {
+        const factory = (await import(pathToFileURL(join(request.cwd, HARNESS_ROOT, path)).href)).default;
         if (typeof factory !== "function") throw new Error(`Plugin ${path} must export a factory`);
         const extension: Extension = await factory({ defineExtension, defineTool, hook, section, ToolTask, Type });
         if (!extension || typeof extension.name !== "string") throw new Error(`Plugin ${path} did not return an extension`);
@@ -100,9 +150,7 @@ export async function createPiAgent(options: {
       try {
         const root = await harness.root(context, { agent: {
           model: { provider: model.provider, modelId: model.id }, thinkingLevel,
-          cwd: request.cwd, instructions: request.tools
-            ? `Complete the user's task using the available tools. Verify the requested deliverables.\n\n${harnessInstructions(files)}`
-            : request.instructions,
+          cwd: request.cwd, instructions: request.instructions,
         } });
         // Identical submissions recover the same pending or completed run after reopening SQLite.
         let submission = await root.submit({ type: "input", content: request.prompt, requestId: "stage" }, context);

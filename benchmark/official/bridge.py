@@ -145,12 +145,13 @@ def check(req, cfg):
 
 def catalog(req, cfg, a):
     tasks = []
+    spec = {"leakGlobs": list(a.spec.leak_globs), "deliverables": a.spec.proposer_deliverables}
     for task_id in a.tasks():
         prompt = a.task_prompt(task_id)
         if req["benchmark"] in ("jb", "lab"):
             prompt += "\n\nInput files are in documents/. Save every requested deliverable in output/. Use python3 scripts/read_doc.py PATH to read PDF, DOCX, XLSX and PPTX inputs."
         tasks.append({"id": task_id, "domain": a.domain_of(task_id), "prompt": prompt,
-                      "guidance": json.dumps(dataclasses.asdict(a.prompts_for(task_id)))})
+                      "guidance": json.dumps(dataclasses.asdict(a.prompts_for(task_id))), **spec})
     # Hash actual installed input bytes, including the recorded HF revision, so a changed
     # dataset cannot silently reuse an earlier experiment/library namespace.
     bench = req["benchmark"].split("-", 1)[0]

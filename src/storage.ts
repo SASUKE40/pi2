@@ -49,15 +49,21 @@ export async function writeJson(path: string, value: unknown): Promise<void> {
   await rename(pending, path);
 }
 
+/** One library entry: the full adopted harness and the experience that supports reusing it. */
 export interface MemoryEntry {
   runId: string;
-  instructions: string;
+  task: string;
+  adopted: string;
+  why: string;
+  cue: string;
   lesson: string;
   evidence: string;
-  files?: HarnessFiles;
+  confidence: string;
+  edits: string;
+  files: HarnessFiles;
 }
 
-export async function readMemory(path: string, limit = 5): Promise<MemoryEntry[]> {
+export async function readMemory(path: string, limit = Infinity): Promise<MemoryEntry[]> {
   let text: string;
   try {
     text = await readFile(path, "utf8");
@@ -67,7 +73,8 @@ export async function readMemory(path: string, limit = 5): Promise<MemoryEntry[]
   }
   const entries: MemoryEntry[] = text.split("\n").filter((line) => line.trim()).map((line) => {
     const entry = JSON.parse(line);
-    if (!entry || !["runId", "instructions", "lesson", "evidence"].every((key) => typeof entry[key] === "string")) {
+    if (!entry || !["runId", "cue", "lesson", "evidence"].every((key) => typeof entry[key] === "string")
+      || !entry.files || typeof entry.files !== "object") {
       throw new Error(`Invalid learning history: ${path}`);
     }
     return entry as MemoryEntry;

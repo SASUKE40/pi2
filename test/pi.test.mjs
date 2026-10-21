@@ -11,6 +11,7 @@ import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completio
 import { pathToFileURL } from "node:url";
 import { createPiAgent } from "../dist/pi.js";
 import { runRefinement } from "../dist/core.js";
+import { writeHarness } from "../dist/harness.js";
 
 function send(res, delta, finish = "stop") {
   res.writeHead(200, { "Content-Type": "text/event-stream" });
@@ -66,15 +67,16 @@ test("real Pi SDK sessions execute file tools through the complete refinement lo
   const requests = [];
   const { root, runtime, modulePath } = await localProvider(t, (body, res) => {
     requests.push(body);
-    const content = body.messages.find((message) => message.role === "user")?.content;
-    const prompt = typeof content === "string" ? content : (content ?? []).map((part) => part.text ?? "").join("\n");
-    if (!body.tools?.some(tool => tool.function.name === "write")) {
-      const value = prompt.startsWith("The adopted execution")
-        ? { lesson: "Write a verifiable artifact", evidence: "The composed execution wrote result.txt and confirmed it with read" }
-        : { instructions: "Write result.txt and read it back to verify the result.", rationale: "The task requires a file artifact." };
-      return send(res, { content: JSON.stringify(value) });
-    }
+    const names = (body.tools ?? []).map(tool => tool.function.name);
     const toolReplies = body.messages.filter((message) => message.role === "tool");
+    if (!names.includes("bash") && names.includes("write")) {
+      if (!toolReplies.length) return send(res, { tool_calls: [{ index: 0, id: "edit-harness", type: "function", function: { name: "write",
+        arguments: JSON.stringify({ path: "context/harness/systemprompt.md", content: "Write result.txt and read it back to verify the result." }) } }] }, "tool_calls");
+      return send(res, { content: "<notes>\nThe task requires a file artifact.\n</notes>" });
+    }
+    if (!names.includes("bash")) {
+      return send(res, { content: "<edits>\ncomponent: systemprompt.md\ncandidates: probe-inv, composed\nchange: read back the artifact\nobserved: result.txt confirmed\nverdict: confounded\n</edits>\n\n<experience>\ncue: a task whose deliverable is a file\nlesson: systemprompt.md: write the artifact, then read it back\nevidence: composed wrote result.txt and confirmed it with read\nconfidence: low\n</experience>" });
+    }
     if (toolReplies.length < 2) {
       const name = toolReplies.length === 0 ? "write" : "read";
       const args = name === "write" ? { path: "result.txt", content: "verified output" } : { path: "result.txt" };
@@ -93,11 +95,12 @@ test("real Pi SDK sessions execute file tools through the complete refinement lo
   await assert.rejects(readFile(join(cwd, "result.txt")), { code: "ENOENT" });
   assert.match(result.answer, /verified output/);
   assert.equal(result.learned, true);
-  assert.equal(requests.filter((request) => !request.tools?.some(tool => tool.function.name === "write")).length, 4);
-  assert.equal(requests.filter((request) => request.tools?.some(tool => tool.function.name === "write")).length, 12);
-  for (const request of requests.filter((request) => request.tools?.some(tool => tool.function.name === "write"))) {
-    assert.deepEqual(request.tools.map((tool) => tool.function.name).sort(), ["bash", "edit", "read", "write"]);
-  }
+  assert.equal(result.harness["systemprompt.md"], "Write result.txt and read it back to verify the result.");
+  const toolset = request => (request.tools ?? []).map(tool => tool.function.name).sort().join(",");
+  assert.equal(requests.filter(r => toolset(r) === "bash,edit,read,write").length, 12);
+  assert.equal(requests.filter(r => toolset(r) === "delete,edit,ls,read,write").length, 6);
+  assert.equal(requests.filter(r => toolset(r) === "ls,read").length, 1);
+  assert.equal(requests.length, 19);
   const messages = JSON.parse(await readFile(join(result.runDir, "composed", "messages.json"), "utf8"));
   assert.equal(messages.filter((message) => message.role === "toolResult").length, 2);
   assert.ok(messages.some((message) => message.role === "toolResult" && message.toolName === "read" && !message.isError));
@@ -141,7 +144,10 @@ test("real Pi SDK sessions execute file tools through the complete refinement lo
   assert.equal(report.summary.refined.checksPassed, 0, "unchanged solution stubs must fail");
   for (const result of report.results) {
     assert.equal(result.stages.length, 8);
-    assert.match(await readFile(join(result.runDir, "propose-general", "prompt.txt"), "utf8"), /"priorLessons": \[\]/);
+    const prompt = await readFile(join(result.runDir, "propose-inv", "prompt.txt"), "utf8");
+    assert.match(prompt, /YOUR DIMENSION: INV/);
+    assert.match(prompt, /context\/rollouts\/ +FULL trajectories: baseline\.md/);
+    assert.doesNotMatch(prompt, /context\/library\/ +earlier tasks/, "fresh state has no library");
     assert.equal(result.baseline.total, 12);
     assert.equal(result.refined.total, 12);
   }
@@ -188,14 +194,13 @@ test("SQLite reopens a completed stage without issuing another model call", asyn
 });
 
 test("durable tools load skills, execute scripts and plugins, and join owned subagents", { timeout: 15000 }, async t => {
-  const { writeHarness } = await import("../dist/harness.js");
   const files = {
-    "systemprompt.md": "Verify the result.", "guardrails.md": "Check units.", "memory.md": "Values are signed.",
-    "tool_guidance.md": "Read the skill and run its script.",
-    "skills/verify/SKILL.md": "When verifying use: node .pi2-harness/scripts/value.mjs",
+    "systemprompt.md": "Verify the result.", "guardrails.md": "Check units.", "LongTermMEMORY.md": "Values are signed.",
+    "tool_descriptions/tool_guidance.md": "Read the skill and run its script.",
+    "skills/verify/SKILL.md": "---\ndescription: when verifying a value\n---\nUse: node .pi2-harness/scripts/value.mjs",
     "scripts/value.mjs": 'console.log("script value: 42")',
-    "sub_agents/reviewer.md": "Respond with child confirmed.",
-    "plugins/check.mjs": `export default ({ defineExtension, defineTool, Type }) => defineExtension({ name: "checker", tools: [defineTool({
+    "sub_agents/reviewer/AGENT.md": "---\ndescription: reviews a result\n---\nRespond with child confirmed.",
+    "plugin/check.mjs": `export default ({ defineExtension, defineTool, Type }) => defineExtension({ name: "checker", tools: [defineTool({
       name: "check_value", description: "Verify a value", parameters: Type.Object({}),
       execute: async () => ({ output: [{ type: "text", text: "plugin confirmed" }] })
     })] });`,
@@ -206,8 +211,12 @@ test("durable tools load skills, execute scripts and plugins, and join owned sub
     const tools = body.messages.filter(m => m.role === "tool");
     if (JSON.stringify(prompt).includes("Review this result")) {
       assert.ok(!body.tools.some(tool => tool.function.name === "subagent"));
+      const system = JSON.stringify(body.messages.filter(m => m.role === "system" || m.role === "developer"));
+      assert.match(system, /Respond with child confirmed/);
+      assert.doesNotMatch(system, /Check units|description: reviews/);
       return send(res, { content: "child confirmed" });
     }
+    assert.match(JSON.stringify(body.tools.find(tool => tool.function.name === "subagent")), /reviewer: reviews a result/);
     const actions = [
       ["read", { path: ".pi2-harness/skills/verify/SKILL.md" }],
       ["bash", { command: "node .pi2-harness/scripts/value.mjs" }],
@@ -268,12 +277,51 @@ await agent.call({ stage: "test", cwd: root, artifactDir: root, instructions: ""
   assert.equal(wrote, 1);
 });
 
-test("solver and improver models route separately and editors can read evidence without write tools", async t => {
+test("editing sessions may write only inside the harness tree", { timeout: 10000 }, async t => {
+  const actions = [
+    ["write", { path: "context/outside.txt", content: "escape" }],
+    ["write", { path: "context/harness/../task.md", content: "escape" }],
+    ["write", { path: "context/harness/skills/x/SKILL.md", content: "---\ndescription: d\n---\nbody" }],
+    ["edit", { path: "context/harness/systemprompt.md", edits: [{ oldText: "old", newText: "new" }] }],
+    ["delete", { path: "context/harness/guardrails.md" }],
+    ["delete", { path: "context/harness" }],
+    ["ls", { path: "context" }],
+    ["read", { path: "/etc/hosts" }],
+  ];
+  const { root, runtime } = await localProvider(t, (body, res) => {
+    const replies = body.messages.filter(m => m.role === "tool");
+    if (replies.length < actions.length) {
+      const [name, args] = actions[replies.length];
+      return send(res, { tool_calls: [{ index: 0, id: `call-${replies.length}`, type: "function", function: { name, arguments: JSON.stringify(args) } }] }, "tool_calls");
+    }
+    assert.match(replies[0].content, /restricted/i);
+    assert.match(replies[1].content, /restricted/i);
+    assert.match(replies[5].content, /not the whole harness/);
+    assert.match(replies[6].content, /harness\/skills\/x\/SKILL\.md/);
+    assert.match(replies[7].content, /restricted/i);
+    return send(res, { content: "<notes>KEEP_BASE</notes>" });
+  });
+  const context = join(root, "context");
+  await mkdir(join(context, "harness"), { recursive: true });
+  await writeFile(join(context, "task.md"), "task");
+  await writeFile(join(context, "harness", "systemprompt.md"), "old");
+  await writeFile(join(context, "harness", "guardrails.md"), "rules");
+  const agent = await createPiAgent({ cwd: root, model: "local-test/test-model", models: runtime });
+  await agent.call({ stage: "edit", cwd: root, artifactDir: join(root, "artifacts"), instructions: "", prompt: "Edit",
+    tools: false, evidenceDir: context, editDir: join(context, "harness"), signal: new AbortController().signal });
+  assert.equal(await readFile(join(context, "harness", "systemprompt.md"), "utf8"), "new");
+  assert.match(await readFile(join(context, "harness", "skills", "x", "SKILL.md"), "utf8"), /body/);
+  await assert.rejects(readFile(join(context, "harness", "guardrails.md")), { code: "ENOENT" });
+  await assert.rejects(readFile(join(context, "outside.txt")), { code: "ENOENT" });
+  assert.equal(await readFile(join(context, "task.md"), "utf8"), "task");
+});
+
+test("solver and improver models route separately and readers get ls and read only", async t => {
   const modelsSeen = [];
   const { root, runtime } = await localProvider(t, (body, res) => {
     modelsSeen.push(body.model);
     if (body.model === "editor") {
-      assert.deepEqual(body.tools.map(tool => tool.function.name), ["read"]);
+      assert.deepEqual(body.tools.map(tool => tool.function.name).sort(), ["ls", "read"]);
       const reply = body.messages.find(m => m.role === "tool");
       if (!reply) return send(res, { tool_calls: [{ index: 0, id: "evidence", type: "function", function: {
         name: "read", arguments: JSON.stringify({ path: "evidence.txt" }),

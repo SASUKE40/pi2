@@ -52,30 +52,32 @@ The module is executable application code; use the same implementation when resu
 
 ## Harness components
 
-`--harness` accepts a Markdown file (the initial system prompt) or a directory with these files:
+`--harness` accepts a Markdown file (the initial system prompt) or a directory laid out as the
+paper's component tree (Table 5):
 
 ```text
-systemprompt.md
-guardrails.md       # prompt constraints, not an OS policy
-memory.md           # execution-time knowledge
-tool_guidance.md    # guidance for using tools
-skills/<name>/SKILL.md
-skills/<name>/scripts/<file>
-scripts/<name>.py|sh|js|mjs
-sub_agents/<name>.md
-plugins/<name>.mjs
+systemprompt.md                      # C1, always on
+guardrails.md                        # C2, always on; prompt constraints, not an OS policy
+LongTermMEMORY.md                    # C3, always on
+tool_descriptions/tool_guidance.md   # C4, always on
+sub_agents/<name>/AGENT.md           # C5, frontmatter `description:` required
+skills/<name>/SKILL.md               # C6, frontmatter `description:` required
+skills/<name>/scripts/<file>         #     helpers that travel with their skill
+scripts/<name>.py|sh|js|mjs          # C7
+plugin/<name>.mjs                    # C8
 ```
 
-Names use letters, numbers, `_`, and `-`. Proposals replace the entire file map. Paths, file types,
-and sizes are validated; each file is limited to 64,000 characters and the total to 256,000.
-The first four files form the execution instructions. Skills and scripts are installed under
-`.pi2-harness/` in each execution copy and listed in the prompt. The agent reads relevant skills
-and invokes scripts through its tools. The original workspace's `.pi2-harness/`, if present, is
-replaced in the execution copies with the chosen harness.
+Component names use lowercase letters, digits, `_`, and `-`. Each file is limited to 64,000
+characters, the tree to 256,000, and the four always-on files together to 24,000. The tree is
+mounted at `.pi2-harness/` in every execution copy, replacing any `.pi2-harness/` the workspace
+already had. The always-on files form the solver's instructions, followed by every skill's name
+and description, the harness scripts, and the subagents; the agent opens a skill body with `read`
+and runs scripts with `bash`.
 
-Each subagent file defines a named specialist, invoked with `subagent({name, task})`. Its
-conversation is owned by the tool task, shares that execution's workspace, and uses the solver
-model. Its enabled tools are `read`, `write`, `edit`, and `bash`; it cannot recursively delegate.
+Each subagent is invoked with `subagent({name, task})`. It runs in its own conversation, owned by
+the tool task, in the same workspace, with the solver model and the `read`, `write`, `edit`, and
+`bash` tools. It sees only its AGENT.md body and the task, not the caller's conversation or
+always-on harness, and it cannot delegate further.
 
 Plugins default-export a factory that returns a Pi Durable extension. Factories receive the
 runtime API, so generated plugins do not need to resolve Pi packages from the copied workspace:
@@ -100,34 +102,69 @@ workspace copies are not a security sandbox. Use an externally isolated environm
 
 ## Refinement and evidence
 
-Both modes start with `k` reference executions of the initial harness.
+Both modes start with `k` base rollouts of the initial harness.
 
-- **Parallel:** propose and probe `k` general and `k` domain candidates, then produce `k`
-  independent compositions from the shared evidence pool.
-- **Sequential:** run `k` successive Propose–Probe–Compose rounds, carrying the refined harness
-  and all earlier evidence into the next round.
+- **Parallel:** `k` INV editors (how the agent works) and `k` DOM editors (what a practitioner
+  knows) each edit the base harness from the base rollouts; every candidate is rolled out once;
+  then `k` independent aggregators compose finals from the base set and all `2k` candidates.
+- **Sequential:** `k` rounds of one INV and one DOM edit of the current checkpoint, both probed,
+  then a composition into checkpoint `t`. Later rounds see every earlier candidate and
+  checkpoint rollout. The `k` checkpoints are the finals.
 
-With `k>1`, a selector chooses among shuffled, anonymized composed outputs using their artifacts, without grades.
-With `k=1`, the single composition is adopted. Reflection then saves a supported transferable
-lesson or returns `null`. Normal runs use `4k` execution sessions and `3k` improvement sessions,
-plus reflection and, when `k>1`, selection. Invalid proposal schemas get one corrective retry,
-then retain the current harness. Invalid selections retry once and fall back to the first shuffled viable final;
-invalid reflections retry once and save no lesson. Fallback reasons are recorded. Transport failures stop the workflow and can be resumed.
+The stage prompts are ported from Harness² `core/prompts.py`, both the `adapt` and `tts` packs.
+Benchmark text enters only through BenchPrompts values (`work`, `domain_word`, `inv_levers`,
+`dom_levers`, `yardstick`, `deliverable_word`, `domain_guidance`, `selection_*`, `prompt_pack`).
+Plain-text guidance becomes the domain lens.
+
+Editors work the way upstream's do. Their evidence is a `context/` directory, and the harness is
+edited in place in `context/harness/`. Untouched files are inherited, and deleting a file removes
+that component. The reply is one `<notes>` block, and `KEEP_BASE` is a valid answer. The evidence
+holds the task, source files, complete trajectories, and the files each rollout produced (or only
+their names, for benchmarks that withhold contents). Candidates sit in `pool/<label>/` with their
+harness, diff, rollout, and products. Earlier stage decisions are included, and so is the
+domain library. Before any rollout, a tree must pass validation:
+
+- it stays on the surface above, and the always-on files fit their cap;
+- every skill and subagent has a description;
+- any script it names exists;
+- scripts and plugins parse;
+- no grader marker appears.
+
+A rejected tree is returned once, with the reason and the tree left on disk. If it fails again,
+the stage keeps its starting harness and records `<stage>-fallback.json`.
+
+The selector sees only the finals that delivered something, shuffled and labelled A, B, …. Its
+evidence is the request, the source, and each candidate's answer and files, and it replies with
+`<why>` and a ```` ```choice ```` block. An invalid reply gets one retry and then falls back to
+the first final in stage order. At `k=1` the single delivered final is adopted without a
+selector. If no final delivered, a delivered base rollout is adopted, and `selection.json`
+records that.
+
+Reflection sees the adopted harness, the base harness, every candidate with its diff and rollout,
+the decisions, and `adoption.json`. It writes one row per edit (`helped`, `hurt`,
+`no observed effect`, or `confounded`) to `edits.md`. It then writes one `<experience>` entry
+(cue, lesson, evidence, confidence) or `NO_ENTRY`. An unparseable reflection gets one retry and
+then saves nothing.
+
+A run makes `4k` executions and `3k` editing sessions, plus reflection, and adds a selector when `k>1`.
+A failed execution is recorded as evidence, rather than stopping the run, and is replayed as
+failed on resume. Pass `tolerateExecutionFailures: false` to stop on the first failure instead.
+The run stops only if no base rollout delivers. Editor, selector, and reflection transport
+failures stop the workflow and can be resumed.
 
 Task sessions use Pi Durable's `read`, `bash`, `edit`, and `write` tools plus harness extensions.
-Editors and the selector have only the `read` tool. Their `evidence/INDEX.md` points to complete
-traces, original inputs, actual execution workspaces (including images), and the prior library.
-Prompt previews are bounded; the full text and artifact files remain available for reading.
-Editors receive no shell or write tool, and their read tool resolves paths and rejects access
-outside the prepared evidence tree. Selectors receive only anonymized answers and artifacts,
-without candidate harnesses, traces, or library entries. These restrictions are not an OS sandbox
-for solver tools or executable plugins.
+Improvement sessions get `ls` and `read` confined to `context/`. Editors additionally get
+`write`, `edit`, and `delete`, confined to `context/harness/` after symlink resolution. Paths
+matching the adapter's leak globs are removed from `context/source/`. Every context is checked
+for answer-key paths and grader-verdict markers before a session starts. These restrictions are
+not an OS sandbox for solver tools or executable plugins.
 
 Learning libraries are separated by domain, solver, improver, thinking level, mode, and budget.
-Each stores an index, full adopted harnesses, and evidence-supported lessons. The last five
-entries appear in prompt previews; all earlier entries are available in `evidence/library.json`.
-Learning guides editors and does not silently replace the next task's initial harness. One process
-at a time owns a state directory; Chord's process lock prevents concurrent writers.
+Each entry stores the full adopted harness, why it was chosen, its edit rows, and the experience.
+Editors browse `context/library/INDEX.md`, then open `harnesses/<run>/harness/` and
+`EXPERIENCE.md`. Learning guides editors and does not silently replace the next task's initial
+harness. One process at a time owns a state directory; Chord's process lock prevents concurrent
+writers.
 
 ## Persistence and failures
 
@@ -141,16 +178,18 @@ This is not a guarantee of exactly-once external effects.
 state/
   libraries/<experiment-hash>/
     INDEX.md, memory.jsonl
-    run-…/harness/, lesson.json
+    harnesses/run-…/harness/, EXPERIENCE.md
   runs/run-…/
     config.json, status.json, memory-snapshot.json
     input/
-    baseline/, probe-general/, probe-task/, composed/  # numbered when k > 1
-      workspace/, session.sqlite
+    baseline/, probe-inv/, probe-dom/, composed/       # numbered when k > 1
+      workspace/, session.sqlite, failure.json (if it failed)
       request.json, response.json, status.json
       instructions.md, prompt.txt, answer.txt, trace.txt, messages.json, usage.json
-    propose-general/, propose-task/, compose/, reflect/, select/
-    result.json
+    propose-inv/, propose-dom/, compose/              # numbered when k > 1; -retry on rejection
+      workspace/context/  harness.json
+    select/, reflect/
+    selection.json, edits.md, *-fallback.json, result.json
 ```
 
 The input snapshot includes dependency directories and excludes `.git` and the state directory.
@@ -161,8 +200,8 @@ Outputs are never automatically applied to the original workspace.
 Ctrl+C or a timeout closes active durable sessions and preserves pending work for `--resume`.
 Resume uses the saved input and learning snapshots. Changes to task, initial harness, model,
 thinking level, domain, budget, or mode are rejected. Worker count and timeout may change.
-Version-1 instruction-only run directories cannot be resumed by this implementation. Legacy
-workspace-level memory files are preserved but are not imported into the new experiment libraries.
+Run directories from earlier pi2 formats cannot be resumed and say so; start a new run. Earlier
+libraries are left in place but are not imported, because their entries lack full adopted trees.
 A reflection failure preserves the composed artifacts; learning is committed only after successful
 reflection, with duplicate run IDs excluded on recovery. Files and SQLite protect against process
 crashes, not all power-loss scenarios. Run folders contain task data and transcripts.
@@ -195,9 +234,10 @@ the BigModel coding endpoint or `ZAI_API_KEY` with the `zai` provider for the in
 
 Reports under `.pi2/benchmarks/quality-*/report.json` contain paired improvements/regressions,
 errors, per-stage timings, usage, estimated costs, source hashes, and schema fallback diagnostics.
-Failed workflows count as failed refined attempts. The local runner stops an attempt on execution
-failure, so a baseline timeout prevents refinement of that task; inspect stage status separately
-from check scores. Usage includes subagents and compaction through the durable session ledger; missing
+Failed workflows count as failed refined attempts. A failed probe or final is recorded as evidence
+and the workflow continues, but a baseline that delivers nothing stops refinement of that task;
+inspect stage status separately from check scores. The refined grade is taken from the adopted
+stage. Usage includes subagents and compaction through the durable session ledger; missing
 usage is `null`. Model-backed runs incur provider charges.
 
 [Recorded quality results](benchmark/RESULTS.md) include real runs on Pi Durable. GLM-5.3-Flash

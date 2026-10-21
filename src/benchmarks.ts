@@ -12,7 +12,11 @@ import { writeJson } from "./storage.js";
 export const UPSTREAM_REVISION = "1cfe254e8d25b15f37048c3730134686abe60335";
 export const BENCHMARKS = ["jb", "lab", "wb-office", "wb-web", "wb-code"] as const;
 export type Benchmark = typeof BENCHMARKS[number];
-export interface BenchmarkTask { id: string; domain: string; prompt: string; guidance: string }
+export interface BenchmarkTask {
+  id: string; domain: string; prompt: string; guidance: string;
+  leakGlobs?: string[]; deliverables?: "contents" | "names";
+}
+export const EXECUTION_STAGE = /^(baseline|probe-inv|probe-dom|composed)(-\d+)?$/;
 export interface Catalog { benchmark: Benchmark; revision: string; tasks: BenchmarkTask[] }
 export type Backend = <T = any>(action: string, args: Record<string, unknown>, signal?: AbortSignal) => Promise<T>;
 export const hash = (value: unknown) => createHash("sha256").update(JSON.stringify(value) ?? "null").digest("hex").slice(0, 20);
@@ -110,7 +114,7 @@ export async function runExperiment(options: ExperimentOptions, backend: Backend
             };
             const result = await runRefinement({ ...options, task: task.prompt, guidance: task.guidance, domain,
               cwd, stateDir: join(dir, "domains", hash(domain)), workers: options.stageWorkers ?? 2,
-              resume: saved?.runDir, tolerateExecutionFailures: true,
+              resume: saved?.runDir, tolerateExecutionFailures: true, leakGlobs: task.leakGlobs ?? [], deliverables: task.deliverables ?? "contents",
               onProgress: async (stage, runDir) => {
                 // Persist the resume pointer before any stage is dispatched.
                 await writeJson(join(recordDir, "run.json"), { status: "running", task: task.id, domain, runDir });
@@ -151,7 +155,7 @@ export async function judgeExperiment(dir: string, backend: Backend, onProgress?
       const record = await readJson(join(recordDir, "run.json"));
       if (record?.status !== "completed") continue;
       await mkdir(join(recordDir, "scores"), { recursive: true });
-      const stages = (await readdir(record.runDir)).filter(name => /^(baseline|probe-general|probe-task|composed)(-\d+)?$/.test(name)).sort();
+      const stages = (await readdir(record.runDir)).filter(name => EXECUTION_STAGE.test(name)).sort();
       for (const stage of stages) {
         const scoreFile = join(recordDir, "scores", `${stage}.json`);
         const previous = await readJson(scoreFile);

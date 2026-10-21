@@ -112,7 +112,7 @@ try {
       notes: ["Fresh state for every attempt; no cross-task learning.",
         "Grades are computed after refinement and never supplied to agents.",
         "Checks are withheld from prompts, not protected by an OS sandbox.",
-        "Full workflow usage includes baseline, proposals, probes, composition, execution, reflection.",
+        "Full workflow usage includes baseline, INV/DOM proposals, probes, composition, execution, reflection.",
         "Costs are Pi estimates; missing usage is null, not zero. No claim of statistical significance."],
       results: [],
     };
@@ -132,9 +132,10 @@ try {
         const stages = [];
         let runDir;
         let error;
+        let adopted = "composed";
         const start = performance.now();
         try {
-          await runRefinement({ task: task.prompt, cwd, stateDir: join(root, "state"),
+          ({ adopted } = await runRefinement({ task: task.prompt, cwd, stateDir: join(root, "state"),
             model: agent.model, improverModel: agent.improverModel, thinkingLevel: agent.thinkingLevel, timeoutMs, signal: controller.signal,
             onProgress: (stage, path) => {
               runDir = path;
@@ -151,12 +152,12 @@ try {
               stages.push({ stage: request.stage, success, seconds: (performance.now() - started) / 1000,
                 ...await usage(request.artifactDir) });
             }
-          });
+          }));
         } catch (failure) { error = String(failure); }
         const seconds = (performance.now() - start) / 1000;
         const baseline = stages.some(s => s.stage === "baseline" && s.success)
           ? grade(task, join(runDir, "baseline", "workspace")) : failedGrade(task, "Baseline did not complete");
-        const refined = !error ? grade(task, join(runDir, "composed", "workspace"))
+        const refined = !error ? grade(task, join(runDir, adopted, "workspace"))
           : failedGrade(task, "Refinement workflow did not complete");
         const cost = !error && stages.length >= 8 && stages.every(s => s.estimatedCostUsd !== null)
           ? stages.reduce((n, s) => n + s.estimatedCostUsd, 0) : null;

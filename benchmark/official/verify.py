@@ -46,6 +46,8 @@ with tempfile.TemporaryDirectory(prefix="pi2-adapters-") as temp:
         catalog = bridge.catalog(req, cfg, a)
         assert len(catalog["tasks"]) == 1
         assert "SECRET" not in json.dumps(catalog)
+        assert catalog["tasks"][0]["leakGlobs"] == list(a.spec.leak_globs)
+        assert catalog["tasks"][0]["deliverables"] == a.spec.proposer_deliverables
         task = catalog["tasks"][0]["id"]
         workspace = root / bench / "workspace"
         req.update(task=task, cwd=str(workspace), scoreDir=str(root / bench / "judging"))

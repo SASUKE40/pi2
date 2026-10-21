@@ -23,13 +23,14 @@ Harness2 refinement with Pi Durable, pi-ai, and Chord.
   --mode MODE         parallel (default) or sequential
   --workers N         Concurrent independent stages, 1–32 (default: 2)
   --domain NAME       Learning domain (default: default)
-  --state-dir DIR     Run artifacts and lessons (default: ~/.pi2/<workspace hash>)
+  --state-dir DIR     Run artifacts and the domain library (default: ~/.pi2/<workspace hash>)
   --resume RUN_DIR    Continue a saved run using its configuration and snapshot
   --timeout SEC       Timeout per agent session (default: 600)
   --help              Show this help
 
 Every execution uses a fresh workspace copy. Results are never applied back automatically.
-At k=1 there are eight agent sessions before any corrective retries. Provider charges apply.
+At k=1 there are eight agent sessions before any corrective retries; k>1 adds a blind selector.
+Provider charges apply.
 `;
 const controller = new AbortController();
 const cancel = () => controller.abort(new Error("Cancelled"));
@@ -70,6 +71,7 @@ try {
     const result = await runRefinement({ task, cwd, stateDir, harness, model: agent.model, improverModel: agent.improverModel,
       thinkingLevel: agent.thinkingLevel, k, mode, workers, domain: values.domain ?? saved?.domain, resume: values.resume,
       timeoutMs: timeout * 1000, signal: controller.signal,
+      guidance: saved?.guidance, leakGlobs: saved?.leakGlobs, deliverables: saved?.deliverables, seed: saved?.seed,
       onProgress: (stage, runDir) => { process.stderr.write(`${stage}${stage === "snapshot" ? `: ${runDir}` : ""}\n`); },
     }, agent.call);
     process.stdout.write(`${result.answer}\n\nOutput: ${result.outputDir}\nRun: ${result.runDir}\nLesson saved: ${result.learned ? "yes" : "no"}\n`);
