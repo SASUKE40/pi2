@@ -88,6 +88,15 @@ started from and your work is lost.
    rejects the proposal. The one exception is a script the RUNTIME already provides in the
    workspace -- one you can see in \`context/source/\` -- invoked at its workspace path.`;
 
+const CHECKS_ARE_A_FLOOR = `A CHECK YOU SHIP IS A FLOOR, NEVER A FINISH LINE. A check script, test list or "before finishing"
+checklist covers only the cases you thought of -- the rollouts never saw the grader, so neither did
+you. The solver must still test the task statement's own rules on cases of its choosing; a
+harness check that passes says nothing about the cases it omits. Present it as ADDITIONAL to the
+solver's own verification. Never tell the solver to run your check INSTEAD OF its own tests, to
+skip or stop writing tests, or that passing it means the work is done -- a proposal that does is
+rejected. When a rollout failed on a rule your check does not exercise, add that rule to the
+check rather than more of the cases it already covers.`;
+
 const HOW_TO_CHANGE = `# HOW TO MAKE A CHANGE
 
 The harness is in \`context/harness/\`, and it is YOURS TO EDIT. Open the files, change them in
@@ -164,6 +173,8 @@ So prefer, in this order:
 
 ${DISCARD_RULES}
 
+${CHECKS_ARE_A_FLOOR}
+
 THE DELIVERABLE'S SHAPE BELONGS TO THE REQUEST, NOT TO YOU. A harness changes HOW the agent
 works; it must never change WHAT SHAPE it delivers. Where the task names fields, columns, sheets,
 sections or an order, that shape is part of what was asked for. A component that tells the agent
@@ -214,6 +225,8 @@ Hard rules, each one learned from a previous failure:
 - Scripts run via bash from \`.pi2-harness/\`; \`scripts/*.py\` must compile, and plugins must parse.
 
 ${DISCARD_RULES}
+
+${CHECKS_ARE_A_FLOOR}
 
 ${HOW_TO_CHANGE}`;
 

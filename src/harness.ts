@@ -20,6 +20,11 @@ export const GRADER_MARKERS = [
   "deterministic_eval_summary", "deterministic_eval_result", "judge_scope_and_deterministic_status",
   "Judge findings on the rendered result", '"passed_count"', '"pass_rate"', '"test_pass_rate"',
 ];
+const REPLACES_VERIFICATION = [
+  /\binstead of (?:hand[- ]?roll|writ|build|run|craft|add)\w*\b[^.\n]{0,60}\b(?:tests?|checks?)\b/i,
+  /\b(?:do not|don't|never|no need to) (?:write|add|run|create|craft) (?:your own|additional|extra|other|more|any|ad[- ]hoc) (?:tests?|checks?)\b/i,
+  /\b(?:if|once|when) (?:it|this|the script|all cases?|every case|all checks?) pass(?:es)?,? (?:you are|you're|the work is|the task is|it is) (?:done|finished|complete)\b/i,
+];
 
 export function isAllowed(path: string): boolean {
   if (path.split("/").some(part => part === ".." || part === "." || part === "")) return false;
@@ -74,6 +79,7 @@ export function harnessInstructions(files: HarnessFiles): string {
   }).join("\n")}`);
   const scripts = Object.keys(files).filter(p => SCRIPT.test(p));
   if (scripts.length) sections.push(`## Harness scripts\nRun from the workspace root:\n${scripts.map(p => `- ${HARNESS_ROOT}/${p}`).join("\n")}`);
+  if (skills.length || scripts.length) sections.push(`## Verification\nHarness checks and checklists cover only the cases their author anticipated. Passing them is not evidence that the work is done: also test the task statement's own rules on cases you choose yourself.`);
   const delegates = subagentNames(files);
   if (delegates.length) sections.push(`## Subagents\nDelegate a bounded sub-task with the \`subagent\` tool; each runs in its own context and returns text:\n${delegates.map(name =>
     `- \`${name}\`: ${frontmatter(files[`sub_agents/${name}/AGENT.md`], "description") ?? "no description"}`).join("\n")}`);
@@ -120,6 +126,8 @@ export async function checkHarness(files: HarnessFiles, options: { provided?: Se
   }
   for (const [path, body] of Object.entries(files)) {
     if (!(SKILL.test(path) || SUBAGENT.test(path) || (ALWAYS_ON as readonly string[]).includes(path))) continue;
+    const replaced = REPLACES_VERIFICATION.map(pattern => body.match(pattern)?.[0]).find(Boolean);
+    if (replaced) errors.push(`${path} says "${replaced}": a harness check covers only the cases its author thought of, so present it as ADDITIONAL to the solver's own tests of the task's rules, never as a replacement or a finish line`);
     for (const match of body.matchAll(SCRIPT_REF)) {
       const ref = match[1].replace(/^\.\//, "");
       if (ref.startsWith(`${HARNESS_ROOT}/`)) {

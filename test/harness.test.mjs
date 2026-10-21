@@ -45,6 +45,18 @@ test("semantic validation names what is wrong", async () => {
   await reject({ "plugin/bad.mjs": "export default (" }, /plugin\/bad\.mjs does not parse/);
 });
 
+test("a harness check may add to the solver's tests but never replace them", async () => {
+  const skill = body => ({ "skills/verify/SKILL.md": `---\ndescription: when verifying merge3\n---\n${body}`, "skills/verify/scripts/verify.mjs": "console.log(1);\n" });
+  for (const body of [
+    "Run the canonical check cases instead of hand-rolling an inline node -e test.",
+    "Do not write your own tests; run node .pi2-harness/skills/verify/scripts/verify.mjs",
+    "Once all cases pass, you are done.",
+  ]) await assert.rejects(checkHarness(skill(body)), /ADDITIONAL to the solver's own tests/, body);
+  await checkHarness(skill("Run node .pi2-harness/skills/verify/scripts/verify.mjs in addition to your own tests of the spec's rules."));
+  assert.match(harnessInstructions(skill("x")), /## Verification\n.*also test the task statement's own rules/);
+  assert.doesNotMatch(harnessInstructions({ "systemprompt.md": "Solve" }), /## Verification/);
+});
+
 test("trees round-trip through disk with placeholders, and diffs show only changes", async t => {
   const root = await mkdtemp(join(tmpdir(), "pi2-tree-"));
   t.after(() => rm(root, { recursive: true, force: true }));
